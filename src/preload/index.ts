@@ -23,6 +23,8 @@ const electronApi: ElectronApi = {
     showInExplorer: (targetPath) =>
       ipcRenderer.send(IpcChannel.FS_SHOW_IN_EXPLORER, targetPath),
     getHome: () => ipcRenderer.invoke(IpcChannel.FS_GET_HOME),
+    listConvertible: (dirPath) =>
+      ipcRenderer.invoke(IpcChannel.FS_LIST_CONVERTIBLE, dirPath),
   },
 
   audio: {
@@ -30,8 +32,8 @@ const electronApi: ElectronApi = {
       ipcRenderer.invoke(IpcChannel.AUDIO_GET_METADATA, filePath),
     readFile: (filePath) =>
       ipcRenderer.invoke(IpcChannel.AUDIO_READ_FILE, filePath),
-    convertToMp3: (dirPath) =>
-      ipcRenderer.invoke(IpcChannel.AUDIO_CONVERT_TO_MP3, dirPath),
+    convertFile: (filePath) =>
+      ipcRenderer.invoke(IpcChannel.AUDIO_CONVERT_FILE, filePath),
     onConvertProgress: (cb) => {
       const handler = (_: unknown, progress: unknown) =>
         cb(progress as Parameters<typeof cb>[0]);

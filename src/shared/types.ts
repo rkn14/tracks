@@ -13,10 +13,11 @@ export const IpcChannel = {
   FS_DELETE: "fs:delete",
   FS_SHOW_IN_EXPLORER: "fs:show-in-explorer",
   FS_GET_HOME: "fs:get-home",
+  FS_LIST_CONVERTIBLE: "fs:list-convertible",
 
   AUDIO_GET_METADATA: "audio:get-metadata",
   AUDIO_READ_FILE: "audio:read-file",
-  AUDIO_CONVERT_TO_MP3: "audio:convert-to-mp3",
+  AUDIO_CONVERT_FILE: "audio:convert-file",
   AUDIO_CONVERT_PROGRESS: "audio:convert-progress",
 
   STORE_GET: "store:get",
@@ -84,11 +85,11 @@ export interface ConvertProgress {
   fileName: string;
 }
 
-export interface ConvertResult {
-  converted: number;
-  skipped: number;
-  errors: string[];
-  sourceFiles: string[];
+export interface ConvertFileResult {
+  ok: boolean;
+  sourcePath: string;
+  destPath: string;
+  error?: string;
 }
 
 // ── Persistence ────────────────────────────────
@@ -122,12 +123,13 @@ export interface ElectronApi {
     delete: (targetPath: string) => Promise<void>;
     showInExplorer: (targetPath: string) => void;
     getHome: () => Promise<string>;
+    listConvertible: (dirPath: string) => Promise<{ name: string; path: string }[]>;
   };
 
   audio: {
     getMetadata: (filePath: string) => Promise<AudioMetadata>;
     readFile: (filePath: string) => Promise<ArrayBuffer>;
-    convertToMp3: (dirPath: string) => Promise<ConvertResult>;
+    convertFile: (filePath: string) => Promise<ConvertFileResult>;
     onConvertProgress: (
       cb: (progress: ConvertProgress) => void,
     ) => () => void;

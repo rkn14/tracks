@@ -4,7 +4,7 @@ import {
   contextMenu,
   type ContextMenuEntry,
 } from "./context-menu";
-import { showPrompt, showConfirm, showAlert } from "./dialogs";
+import { showPrompt, showConfirm, showAlert, showConvertDialog } from "./dialogs";
 import { eventBus } from "../lib/event-bus";
 
 type PanelId = "left" | "right";
@@ -18,23 +18,35 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} Go`;
 }
 
+// ── Tree node ───────────────────────────────────
+
+interface TreeNode {
+  name: string;
+  path: string;
+  expanded: boolean;
+  loaded: boolean;
+  children: TreeNode[];
+}
+
+// ── FileExplorer ────────────────────────────────
+
 export class FileExplorer {
   private api: ElectronApi;
   private panelId: PanelId;
   private el: HTMLElement;
 
   private currentPath = "";
-  private history: string[] = [];
-  private historyIndex = -1;
   private entries: FileEntry[] = [];
   private volumes: Volume[] = [];
   private loading = false;
 
+  private treeRoots: TreeNode[] = [];
+  private selectedNode: TreeNode | null = null;
+  private selectedEntry: FileEntry | null = null;
+
+  private treeEl!: HTMLElement;
+  private contentEl!: HTMLElement;
   private pathInput!: HTMLInputElement;
-  private fileList!: HTMLElement;
-  private btnBack!: HTMLButtonElement;
-  private btnForward!: HTMLButtonElement;
-  private btnUp!: HTMLButtonElement;
   private btnConvert!: HTMLButtonElement | null;
 
   constructor(container: HTMLElement, panelId: PanelId) {
@@ -51,29 +63,69 @@ export class FileExplorer {
 
     this.el.innerHTML = `
       <div class="fe-toolbar">
-        <button class="fe-btn" data-action="back" title="Précédent" disabled>&#x2190;</button>
-        <button class="fe-btn" data-action="forward" title="Suivant" disabled>&#x2192;</button>
-        <button class="fe-btn" data-action="up" title="Dossier parent" disabled>&#x2191;</button>
         <input class="fe-path" type="text" spellcheck="false" />
         ${convertBtn}
       </div>
-      <div class="fe-list"></div>
+      <div class="fe-body">
+        <div class="fe-tree"></div>
+        <div class="fe-divider"></div>
+        <div class="fe-content"></div>
+      </div>
     `;
 
-    this.btnBack = this.el.querySelector('[data-action="back"]')!;
-    this.btnForward = this.el.querySelector('[data-action="forward"]')!;
-    this.btnUp = this.el.querySelector('[data-action="up"]')!;
     this.pathInput = this.el.querySelector(".fe-path")!;
-    this.fileList = this.el.querySelector(".fe-list")!;
-
+    this.treeEl = this.el.querySelector(".fe-tree")!;
+    this.contentEl = this.el.querySelector(".fe-content")!;
     this.btnConvert = this.el.querySelector('[data-action="convert"]');
 
-    this.btnBack.addEventListener("click", () => this.goBack());
-    this.btnForward.addEventListener("click", () => this.goForward());
-    this.btnUp.addEventListener("click", () => this.goUp());
     this.btnConvert?.addEventListener("click", () => this.convertToMp3());
     this.pathInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") this.navigateTo(this.pathInput.value.trim());
+      if (e.key === "Enter") this.selectPath(this.pathInput.value.trim());
+    });
+
+    this.initDividerResize();
+
+    this.el.addEventListener("keydown", (e) => {
+      if (e.key === "Delete" && this.selectedEntry) {
+        e.preventDefault();
+        this.promptDelete(this.selectedEntry);
+      }
+    });
+    this.el.tabIndex = -1;
+  }
+
+  private initDividerResize(): void {
+    const divider = this.el.querySelector<HTMLElement>(".fe-divider")!;
+    const body = this.el.querySelector<HTMLElement>(".fe-body")!;
+
+    let dragging = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging) return;
+      const delta = e.clientX - startX;
+      const newWidth = Math.max(80, Math.min(startWidth + delta, body.clientWidth - 100));
+      body.style.gridTemplateColumns = `${newWidth}px 3px 1fr`;
+    };
+
+    const onMouseUp = () => {
+      dragging = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    divider.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      dragging = true;
+      startX = e.clientX;
+      startWidth = this.treeEl.getBoundingClientRect().width;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
     });
   }
 
@@ -86,11 +138,32 @@ export class FileExplorer {
       this.volumes = [];
     }
 
-    try {
-      const startPath = savedPath || (await this.api.fs.getHome());
-      await this.navigateTo(startPath);
-    } catch {
-      this.showVolumes();
+    this.treeRoots = this.volumes.map((v) => ({
+      name: v.label ? `${v.label} (${v.name})` : v.name,
+      path: v.path,
+      expanded: false,
+      loaded: false,
+      children: [],
+    }));
+
+    const startPath = savedPath || (await this.api.fs.getHome().catch(() => ""));
+
+    if (startPath) {
+      await this.expandToPath(startPath);
+      const node = this.findNode(startPath);
+      if (node) {
+        this.selectedNode = node;
+        if (!node.loaded) await this.loadChildren(node);
+        node.expanded = true;
+      }
+      try {
+        await this.loadContent(startPath);
+      } catch {
+        /* folder may no longer exist */
+      }
+      this.renderTree();
+    } else {
+      this.renderTree();
     }
   }
 
@@ -98,56 +171,201 @@ export class FileExplorer {
     return this.currentPath;
   }
 
-  /** Re-read the current directory without touching history. */
   async refresh(): Promise<void> {
     if (this.currentPath) {
-      await this.loadDirectory(this.currentPath);
-    } else {
-      this.showVolumes();
+      await this.loadContent(this.currentPath);
+      if (this.selectedNode) {
+        this.selectedNode.loaded = false;
+        await this.loadChildren(this.selectedNode);
+      }
+      this.renderTree();
     }
   }
 
-  /** Navigate to a new path (pushes to history). */
-  async navigateTo(dirPath: string): Promise<void> {
-    if (!dirPath) {
-      this.showVolumes();
-      return;
-    }
-    if (this.loading) return;
-
+  async selectPath(dirPath: string): Promise<void> {
+    if (!dirPath || this.loading) return;
     try {
-      await this.loadDirectory(dirPath);
-      this.pushHistory(dirPath);
+      await this.loadContent(dirPath);
       this.persist(dirPath);
+      await this.expandToPath(dirPath);
+
+      const node = this.findNode(dirPath);
+      if (node) this.selectedNode = node;
+      this.renderTree();
     } catch {
-      this.showVolumes();
+      /* ignore */
     }
   }
 
-  // ── Core loading ───────────────────────────────
+  // ── Tree operations ────────────────────────────
 
-  private async loadDirectory(dirPath: string): Promise<void> {
+  private async loadChildren(node: TreeNode): Promise<void> {
+    if (node.loaded) return;
+    try {
+      const entries = await this.api.fs.readDirectory(node.path);
+      node.children = entries
+        .filter((e) => e.isDirectory)
+        .map((e) => ({
+          name: e.name,
+          path: e.path,
+          expanded: false,
+          loaded: false,
+          children: [],
+        }));
+      node.loaded = true;
+    } catch {
+      node.children = [];
+      node.loaded = true;
+    }
+  }
+
+  private async toggleNode(node: TreeNode): Promise<void> {
+    if (!node.expanded) {
+      await this.loadChildren(node);
+      node.expanded = true;
+    } else {
+      node.expanded = false;
+    }
+    this.renderTree();
+  }
+
+  private async onNodeSelect(node: TreeNode): Promise<void> {
+    this.selectedNode = node;
+    await this.loadContent(node.path);
+    this.persist(node.path);
+
+    if (!node.loaded) {
+      await this.loadChildren(node);
+    }
+    if (!node.expanded) {
+      node.expanded = true;
+    }
+    this.renderTree();
+  }
+
+  private findNode(targetPath: string, roots?: TreeNode[]): TreeNode | null {
+    const normalized = targetPath.replace(/[\\/]+$/, "").toLowerCase();
+    for (const node of roots ?? this.treeRoots) {
+      if (node.path.replace(/[\\/]+$/, "").toLowerCase() === normalized) {
+        return node;
+      }
+      const found = this.findNode(targetPath, node.children);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  private async expandToPath(targetPath: string): Promise<void> {
+    const norm = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
+    const target = norm(targetPath);
+    let nodes = this.treeRoots;
+
+    // Find root volume
+    const root = nodes.find((n) => target.startsWith(norm(n.path)));
+    if (!root) return;
+
+    if (!root.loaded) await this.loadChildren(root);
+    root.expanded = true;
+
+    // Walk down the path
+    const relative = targetPath.slice(root.path.length);
+    const sep = root.path.includes("/") ? "/" : "\\";
+    const segments = relative.split(/[\\/]/).filter(Boolean);
+
+    let current = root;
+    for (const seg of segments) {
+      const child = current.children.find(
+        (c) => c.name.toLowerCase() === seg.toLowerCase(),
+      );
+      if (!child) break;
+
+      if (!child.loaded) await this.loadChildren(child);
+      child.expanded = true;
+      current = child;
+    }
+  }
+
+  // ── Tree rendering ─────────────────────────────
+
+  private renderTree(): void {
+    this.treeEl.innerHTML = "";
+    for (const root of this.treeRoots) {
+      this.treeEl.appendChild(this.createTreeItem(root, 0));
+    }
+    const selected = this.treeEl.querySelector(".is-selected");
+    selected?.scrollIntoView({ block: "nearest" });
+  }
+
+  private createTreeItem(node: TreeNode, depth: number): HTMLElement {
+    const frag = document.createDocumentFragment() as unknown as HTMLElement;
+    const wrapper = document.createElement("div");
+
+    const row = document.createElement("div");
+    row.className = "fe-tree-item";
+    if (this.selectedNode === node) row.classList.add("is-selected");
+    row.style.paddingLeft = `${8 + depth * 16}px`;
+
+    const arrow = document.createElement("span");
+    arrow.className = "fe-tree-arrow";
+    if (node.loaded && node.children.length === 0) {
+      arrow.classList.add("fe-tree-arrow--empty");
+    } else if (node.expanded) {
+      arrow.classList.add("fe-tree-arrow--open");
+    }
+    arrow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleNode(node);
+    });
+
+    const label = document.createElement("span");
+    label.className = "fe-tree-label";
+    label.textContent = node.name;
+
+    row.append(arrow, label);
+    row.addEventListener("click", () => this.onNodeSelect(node));
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.onTreeContextMenu(node, e.clientX, e.clientY);
+    });
+
+    wrapper.appendChild(row);
+
+    if (node.expanded) {
+      for (const child of node.children) {
+        wrapper.appendChild(this.createTreeItem(child, depth + 1));
+      }
+    }
+
+    return wrapper;
+  }
+
+  private onTreeContextMenu(node: TreeNode, x: number, y: number): void {
+    const entry: FileEntry = {
+      name: node.name,
+      path: node.path,
+      isDirectory: true,
+      size: 0,
+      modifiedAt: 0,
+      extension: "",
+    };
+    this.onContextMenu(entry, x, y);
+  }
+
+  // ── Content loading ────────────────────────────
+
+  private async loadContent(dirPath: string): Promise<void> {
     this.loading = true;
+    this.selectedEntry = null;
     try {
       this.entries = await this.api.fs.readDirectory(dirPath);
       this.currentPath = dirPath;
       this.pathInput.value = dirPath;
       this.el.dataset.currentPath = dirPath;
-      this.renderEntries();
-      this.updateNavButtons();
+      this.renderContent();
     } finally {
       this.loading = false;
     }
-  }
-
-  private pushHistory(dirPath: string): void {
-    if (this.historyIndex >= 0 && this.history[this.historyIndex] === dirPath) {
-      return;
-    }
-    this.history = this.history.slice(0, this.historyIndex + 1);
-    this.history.push(dirPath);
-    this.historyIndex = this.history.length - 1;
-    this.updateNavButtons();
   }
 
   private persist(dirPath: string): void {
@@ -156,102 +374,34 @@ export class FileExplorer {
       .catch(() => {});
   }
 
-  // ── Navigation helpers ─────────────────────────
+  // ── Content rendering ──────────────────────────
 
-  private async goBack(): Promise<void> {
-    if (this.historyIndex <= 0) return;
-    this.historyIndex--;
-    try {
-      await this.loadDirectory(this.history[this.historyIndex]);
-      this.updateNavButtons();
-      this.persist(this.history[this.historyIndex]);
-    } catch {
-      this.showVolumes();
-    }
-  }
+  private renderContent(): void {
+    this.contentEl.innerHTML = "";
 
-  private async goForward(): Promise<void> {
-    if (this.historyIndex >= this.history.length - 1) return;
-    this.historyIndex++;
-    try {
-      await this.loadDirectory(this.history[this.historyIndex]);
-      this.updateNavButtons();
-      this.persist(this.history[this.historyIndex]);
-    } catch {
-      this.showVolumes();
-    }
-  }
+    const files = this.entries.filter((e) => !e.isDirectory);
 
-  private goUp(): void {
-    if (!this.currentPath) return;
-    const sep = this.currentPath.includes("/") ? "/" : "\\";
-    const parts = this.currentPath.split(sep).filter(Boolean);
-    if (parts.length <= 1) {
-      this.showVolumes();
-      return;
-    }
-    parts.pop();
-    let parent = parts.join(sep);
-    const isWindows = sep === "\\" || parent.includes(":");
-    if (!isWindows) {
-      parent = "/" + parent;
-    } else if (parent.endsWith(":")) {
-      parent += "\\";
-    }
-    this.navigateTo(parent);
-  }
-
-  // ── Rendering ──────────────────────────────────
-
-  private showVolumes(): void {
-    this.currentPath = "";
-    this.pathInput.value = "";
-    this.entries = [];
-    this.el.dataset.currentPath = "";
-    this.updateNavButtons();
-
-    this.fileList.innerHTML = "";
-    for (const vol of this.volumes) {
-      const row = this.createRow(
-        {
-          name: vol.label ? `${vol.label} (${vol.name})` : vol.name,
-          path: vol.path,
-          isDirectory: true,
-          size: vol.sizeBytes ?? 0,
-          modifiedAt: 0,
-          extension: "",
-        },
-        "💾",
-      );
-      this.fileList.appendChild(row);
-    }
-  }
-
-  private renderEntries(): void {
-    this.fileList.innerHTML = "";
-
-    if (this.entries.length === 0) {
+    if (files.length === 0) {
       const empty = document.createElement("div");
       empty.className = "fe-empty";
-      empty.textContent = "Dossier vide (aucun dossier ou fichier audio)";
-      this.fileList.appendChild(empty);
+      empty.textContent = "Aucun fichier audio";
+      this.contentEl.appendChild(empty);
       return;
     }
 
-    for (const entry of this.entries) {
-      const icon = entry.isDirectory ? "📁" : "🎵";
-      this.fileList.appendChild(this.createRow(entry, icon));
+    for (const entry of files) {
+      this.contentEl.appendChild(this.createFileRow(entry));
     }
   }
 
-  private createRow(entry: FileEntry, icon: string): HTMLElement {
+  private createFileRow(entry: FileEntry): HTMLElement {
     const row = document.createElement("div");
     row.className = "fe-row";
     row.dataset.path = entry.path;
 
     const iconSpan = document.createElement("span");
     iconSpan.className = "fe-row__icon";
-    iconSpan.textContent = icon;
+    iconSpan.textContent = "🎵";
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "fe-row__name";
@@ -259,21 +409,26 @@ export class FileExplorer {
 
     const sizeSpan = document.createElement("span");
     sizeSpan.className = "fe-row__size";
-    sizeSpan.textContent =
-      !entry.isDirectory && entry.size > 0 ? formatSize(entry.size) : "";
+    sizeSpan.textContent = entry.size > 0 ? formatSize(entry.size) : "";
 
     const extSpan = document.createElement("span");
     extSpan.className = "fe-row__ext";
-    extSpan.textContent = !entry.isDirectory
-      ? entry.extension.toUpperCase().slice(1)
-      : "";
+    extSpan.textContent = entry.extension.toUpperCase().slice(1);
 
     row.append(iconSpan, nameSpan, sizeSpan, extSpan);
 
-    row.addEventListener("dblclick", () => this.onDoubleClick(entry));
+    row.addEventListener("click", () => {
+      this.selectEntry(entry, row);
+    });
+    row.addEventListener("dblclick", () => {
+      if (audioExtSet.has(entry.extension.toLowerCase())) {
+        eventBus.emit("play-file", { filePath: entry.path });
+      }
+    });
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      this.selectEntry(entry, row);
       this.onContextMenu(entry, e.clientX, e.clientY);
     });
 
@@ -282,12 +437,13 @@ export class FileExplorer {
 
   // ── Interactions ───────────────────────────────
 
-  private onDoubleClick(entry: FileEntry): void {
-    if (entry.isDirectory) {
-      this.navigateTo(entry.path);
-    } else if (audioExtSet.has(entry.extension.toLowerCase())) {
-      eventBus.emit("play-file", { filePath: entry.path });
-    }
+  private selectEntry(entry: FileEntry, row: HTMLElement): void {
+    this.selectedEntry = entry;
+    this.contentEl
+      .querySelectorAll(".fe-row.is-selected")
+      .forEach((el) => el.classList.remove("is-selected"));
+    row.classList.add("is-selected");
+    this.el.focus();
   }
 
   private onContextMenu(entry: FileEntry, x: number, y: number): void {
@@ -369,7 +525,14 @@ export class FileExplorer {
     }
   }
 
+  // ── Convert to MP3 (queue-based) ───────────────
+
+  private convertQueue: { path: string; deleteSource: boolean }[] = [];
+  private converting = false;
   private progressEl: HTMLElement | null = null;
+  private convertedCount = 0;
+  private convertTotalCount = 0;
+  private convertErrors: string[] = [];
 
   private showProgress(text: string): void {
     if (!this.progressEl) {
@@ -387,92 +550,73 @@ export class FileExplorer {
 
   private async convertToMp3(): Promise<void> {
     if (!this.currentPath) {
-      await showAlert("Naviguez d'abord dans un dossier.");
+      await showAlert("Sélectionnez d'abord un dossier.");
       return;
     }
 
-    const convertible = this.entries.filter(
-      (e) =>
-        !e.isDirectory &&
-        [".wav", ".aiff", ".aif", ".flac"].includes(e.extension.toLowerCase()),
-    );
+    const convertible = await this.api.fs.listConvertible(this.currentPath);
 
     if (convertible.length === 0) {
-      await showAlert("Aucun fichier WAV, AIFF ou FLAC dans ce dossier.");
+      await showAlert("Aucun fichier WAV, AIFF ou FLAC dans ce dossier ni ses sous-dossiers.");
       return;
     }
 
-    const ok = await showConfirm(
-      `Convertir ${convertible.length} fichier(s) en MP3 (320 kbps) ?\n\n` +
-        convertible.map((f) => f.name).join("\n"),
-    );
-    if (!ok) return;
+    const result = await showConvertDialog(convertible);
+    if (!result) return;
 
-    if (this.btnConvert) {
-      this.btnConvert.disabled = true;
-      this.btnConvert.textContent = "⏳";
+    for (const filePath of result.files) {
+      this.convertQueue.push({
+        path: filePath,
+        deleteSource: result.deleteSource,
+      });
     }
+    this.convertTotalCount += result.files.length;
 
-    this.showProgress("Préparation…");
-
-    const unsubscribe = this.api.audio.onConvertProgress((p) => {
-      this.showProgress(
-        `Conversion ${p.current}/${p.total} — ${p.fileName}`,
-      );
-    });
-
-    try {
-      const result = await this.api.audio.convertToMp3(this.currentPath);
-      unsubscribe();
-      this.hideProgress();
-
-      const lines: string[] = [];
-      if (result.converted > 0)
-        lines.push(`✓ ${result.converted} fichier(s) converti(s)`);
-      if (result.skipped > 0)
-        lines.push(`– ${result.skipped} ignoré(s) (MP3 déjà présent)`);
-      if (result.errors.length > 0)
-        lines.push(`\n✗ Erreurs :\n${result.errors.join("\n")}`);
-
-      await showAlert(lines.join("\n") || "Aucun fichier à convertir.");
-      await this.refresh();
-
-      if (result.sourceFiles.length > 0) {
-        const names = result.sourceFiles
-          .map((f) => f.replace(/.*[\\/]/, ""))
-          .join("\n");
-        const del = await showConfirm(
-          `Supprimer les ${result.sourceFiles.length} fichier(s) source ?\n` +
-            "(Ils seront déplacés dans la corbeille)\n\n" +
-            names,
-        );
-        if (del) {
-          for (const src of result.sourceFiles) {
-            try {
-              await this.api.fs.delete(src);
-            } catch {
-              /* best effort */
-            }
-          }
-          await this.refresh();
-        }
-      }
-    } catch (err) {
-      unsubscribe();
-      this.hideProgress();
-      await showAlert(`Erreur de conversion : ${err}`);
-    } finally {
-      if (this.btnConvert) {
-        this.btnConvert.disabled = false;
-        this.btnConvert.textContent = "MP3";
-      }
-    }
+    this.processQueue();
   }
 
-  private updateNavButtons(): void {
-    this.btnBack.disabled = this.historyIndex <= 0;
-    this.btnForward.disabled =
-      this.historyIndex >= this.history.length - 1;
-    this.btnUp.disabled = !this.currentPath;
+  private async processQueue(): Promise<void> {
+    if (this.converting) return;
+    this.converting = true;
+
+    while (this.convertQueue.length > 0) {
+      const item = this.convertQueue.shift()!;
+      const fileName = item.path.replace(/.*[\\/]/, "");
+      this.convertedCount++;
+      this.showProgress(
+        `Conversion ${this.convertedCount}/${this.convertTotalCount} — ${fileName}`,
+      );
+
+      const res = await this.api.audio.convertFile(item.path);
+
+      if (res.ok && item.deleteSource) {
+        try {
+          await this.api.fs.delete(res.sourcePath);
+        } catch {
+          /* best effort */
+        }
+      }
+
+      if (!res.ok && res.error) {
+        this.convertErrors.push(`${fileName}: ${res.error}`);
+      }
+    }
+
+    this.hideProgress();
+    this.converting = false;
+
+    const lines: string[] = [];
+    lines.push(`✓ ${this.convertedCount - this.convertErrors.length} fichier(s) converti(s)`);
+    if (this.convertErrors.length > 0) {
+      lines.push(`\n✗ Erreurs :\n${this.convertErrors.join("\n")}`);
+    }
+
+    const summary = lines.join("\n");
+    this.convertedCount = 0;
+    this.convertTotalCount = 0;
+    this.convertErrors = [];
+
+    await this.refresh();
+    await showAlert(summary);
   }
 }

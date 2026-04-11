@@ -214,3 +214,36 @@ export function showInExplorer(targetPath: string): void {
 export function getHome(): string {
   return os.homedir();
 }
+
+const CONVERTIBLE_EXTS = new Set([".wav", ".aiff", ".aif", ".flac"]);
+
+export async function listConvertible(
+  dirPath: string,
+): Promise<{ name: string; path: string }[]> {
+  const results: { name: string; path: string }[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+      } else {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (CONVERTIBLE_EXTS.has(ext)) {
+          const relative = path.relative(dirPath, full);
+          results.push({ name: relative, path: full });
+        }
+      }
+    }
+  }
+
+  await walk(dirPath);
+  results.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  return results;
+}

@@ -9,9 +9,10 @@ import {
   deleteEntry,
   showInExplorer,
   getHome,
+  listConvertible,
 } from "./services/filesystem";
 import { getAudioMetadata } from "./services/audio-metadata";
-import { convertDirectoryToMp3 } from "./services/convert";
+import { convertFileToMp3 } from "./services/convert";
 import { storeGet, storeSet } from "./services/store";
 
 export function registerIpcHandlers(ipcMain: IpcMain): void {
@@ -58,15 +59,17 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(IpcChannel.FS_GET_HOME, () => getHome());
 
+  ipcMain.handle(IpcChannel.FS_LIST_CONVERTIBLE, (_, dirPath: string) =>
+    listConvertible(dirPath),
+  );
+
   // ── Audio ────────────────────────────────────
   ipcMain.handle(IpcChannel.AUDIO_GET_METADATA, (_, filePath: string) =>
     getAudioMetadata(filePath),
   );
 
-  ipcMain.handle(IpcChannel.AUDIO_CONVERT_TO_MP3, (event, dirPath: string) =>
-    convertDirectoryToMp3(dirPath, (progress) => {
-      event.sender.send(IpcChannel.AUDIO_CONVERT_PROGRESS, progress);
-    }),
+  ipcMain.handle(IpcChannel.AUDIO_CONVERT_FILE, (_, filePath: string) =>
+    convertFileToMp3(filePath),
   );
 
   ipcMain.handle(IpcChannel.AUDIO_READ_FILE, async (_, filePath: string) => {
