@@ -35,6 +35,7 @@ export class FileExplorer {
   private btnBack!: HTMLButtonElement;
   private btnForward!: HTMLButtonElement;
   private btnUp!: HTMLButtonElement;
+  private btnConvert!: HTMLButtonElement | null;
 
   constructor(container: HTMLElement, panelId: PanelId) {
     this.api = window.electronApi;
@@ -44,12 +45,17 @@ export class FileExplorer {
   }
 
   private buildShell(): void {
+    const convertBtn = this.panelId === "left"
+      ? `<button class="fe-btn fe-btn--convert" data-action="convert" title="Convertir WAV / AIFF / FLAC → MP3">MP3</button>`
+      : "";
+
     this.el.innerHTML = `
       <div class="fe-toolbar">
         <button class="fe-btn" data-action="back" title="Précédent" disabled>&#x2190;</button>
         <button class="fe-btn" data-action="forward" title="Suivant" disabled>&#x2192;</button>
         <button class="fe-btn" data-action="up" title="Dossier parent" disabled>&#x2191;</button>
         <input class="fe-path" type="text" spellcheck="false" />
+        ${convertBtn}
       </div>
       <div class="fe-list"></div>
     `;
@@ -60,9 +66,12 @@ export class FileExplorer {
     this.pathInput = this.el.querySelector(".fe-path")!;
     this.fileList = this.el.querySelector(".fe-list")!;
 
+    this.btnConvert = this.el.querySelector('[data-action="convert"]');
+
     this.btnBack.addEventListener("click", () => this.goBack());
     this.btnForward.addEventListener("click", () => this.goForward());
     this.btnUp.addEventListener("click", () => this.goUp());
+    this.btnConvert?.addEventListener("click", () => this.convertToMp3());
     this.pathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") this.navigateTo(this.pathInput.value.trim());
     });
@@ -357,6 +366,106 @@ export class FileExplorer {
       await this.refresh();
     } catch (err) {
       await showAlert(`Erreur lors de la suppression : ${err}`);
+    }
+  }
+
+  private progressEl: HTMLElement | null = null;
+
+  private showProgress(text: string): void {
+    if (!this.progressEl) {
+      this.progressEl = document.createElement("div");
+      this.progressEl.className = "fe-progress";
+      this.el.appendChild(this.progressEl);
+    }
+    this.progressEl.textContent = text;
+  }
+
+  private hideProgress(): void {
+    this.progressEl?.remove();
+    this.progressEl = null;
+  }
+
+  private async convertToMp3(): Promise<void> {
+    if (!this.currentPath) {
+      await showAlert("Naviguez d'abord dans un dossier.");
+      return;
+    }
+
+    const convertible = this.entries.filter(
+      (e) =>
+        !e.isDirectory &&
+        [".wav", ".aiff", ".aif", ".flac"].includes(e.extension.toLowerCase()),
+    );
+
+    if (convertible.length === 0) {
+      await showAlert("Aucun fichier WAV, AIFF ou FLAC dans ce dossier.");
+      return;
+    }
+
+    const ok = await showConfirm(
+      `Convertir ${convertible.length} fichier(s) en MP3 (320 kbps) ?\n\n` +
+        convertible.map((f) => f.name).join("\n"),
+    );
+    if (!ok) return;
+
+    if (this.btnConvert) {
+      this.btnConvert.disabled = true;
+      this.btnConvert.textContent = "⏳";
+    }
+
+    this.showProgress("Préparation…");
+
+    const unsubscribe = this.api.audio.onConvertProgress((p) => {
+      this.showProgress(
+        `Conversion ${p.current}/${p.total} — ${p.fileName}`,
+      );
+    });
+
+    try {
+      const result = await this.api.audio.convertToMp3(this.currentPath);
+      unsubscribe();
+      this.hideProgress();
+
+      const lines: string[] = [];
+      if (result.converted > 0)
+        lines.push(`✓ ${result.converted} fichier(s) converti(s)`);
+      if (result.skipped > 0)
+        lines.push(`– ${result.skipped} ignoré(s) (MP3 déjà présent)`);
+      if (result.errors.length > 0)
+        lines.push(`\n✗ Erreurs :\n${result.errors.join("\n")}`);
+
+      await showAlert(lines.join("\n") || "Aucun fichier à convertir.");
+      await this.refresh();
+
+      if (result.sourceFiles.length > 0) {
+        const names = result.sourceFiles
+          .map((f) => f.replace(/.*[\\/]/, ""))
+          .join("\n");
+        const del = await showConfirm(
+          `Supprimer les ${result.sourceFiles.length} fichier(s) source ?\n` +
+            "(Ils seront déplacés dans la corbeille)\n\n" +
+            names,
+        );
+        if (del) {
+          for (const src of result.sourceFiles) {
+            try {
+              await this.api.fs.delete(src);
+            } catch {
+              /* best effort */
+            }
+          }
+          await this.refresh();
+        }
+      }
+    } catch (err) {
+      unsubscribe();
+      this.hideProgress();
+      await showAlert(`Erreur de conversion : ${err}`);
+    } finally {
+      if (this.btnConvert) {
+        this.btnConvert.disabled = false;
+        this.btnConvert.textContent = "MP3";
+      }
     }
   }
 

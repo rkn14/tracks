@@ -154,6 +154,26 @@ body {
   cursor: default;
 }
 
+.fe-btn--convert {
+  width: auto;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
+.fe-btn--convert:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.fe-btn--convert:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .fe-path {
   flex: 1;
   height: 26px;
@@ -235,6 +255,19 @@ body {
   font-weight: 600;
   color: var(--color-accent);
   letter-spacing: 0.04em;
+}
+
+.fe-progress {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-surface-alt);
+  border-top: 1px solid var(--color-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .fe-empty {

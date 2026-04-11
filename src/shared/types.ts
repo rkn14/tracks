@@ -16,6 +16,8 @@ export const IpcChannel = {
 
   AUDIO_GET_METADATA: "audio:get-metadata",
   AUDIO_READ_FILE: "audio:read-file",
+  AUDIO_CONVERT_TO_MP3: "audio:convert-to-mp3",
+  AUDIO_CONVERT_PROGRESS: "audio:convert-progress",
 
   STORE_GET: "store:get",
   STORE_SET: "store:set",
@@ -74,6 +76,21 @@ export interface AudioMetadata {
   lossless?: boolean;
 }
 
+// ── Conversion ──────────────────────────────────
+
+export interface ConvertProgress {
+  current: number;
+  total: number;
+  fileName: string;
+}
+
+export interface ConvertResult {
+  converted: number;
+  skipped: number;
+  errors: string[];
+  sourceFiles: string[];
+}
+
 // ── Persistence ────────────────────────────────
 
 export interface PanelState {
@@ -110,6 +127,10 @@ export interface ElectronApi {
   audio: {
     getMetadata: (filePath: string) => Promise<AudioMetadata>;
     readFile: (filePath: string) => Promise<ArrayBuffer>;
+    convertToMp3: (dirPath: string) => Promise<ConvertResult>;
+    onConvertProgress: (
+      cb: (progress: ConvertProgress) => void,
+    ) => () => void;
   };
 
   store: {
