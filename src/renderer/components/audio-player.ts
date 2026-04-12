@@ -46,6 +46,12 @@ export class AudioPlayer {
   private btnPlay!: HTMLButtonElement;
   private volumeSlider!: HTMLInputElement;
   private waveformEl!: HTMLElement;
+  private spectrumCanvas!: HTMLCanvasElement;
+  private audioCtx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private sourceNode: MediaElementAudioSourceNode | null = null;
+  private vizRafId = 0;
+  private vizMode: "spectrum" | "oscilloscope" = "spectrum";
 
   constructor(container: HTMLElement) {
     this.api = window.electronApi;
@@ -59,7 +65,15 @@ export class AudioPlayer {
     this.el.innerHTML = `
       <div class="player">
         <div class="player__waveform-row"></div>
-        <div class="player__bottom">
+        <div class="player__transport">
+          <button class="player__btn-play" title="Lecture / Pause"></button>
+          <span class="player__time-current">0:00</span>
+          <span class="player__time-sep">/</span>
+          <span class="player__time-total">0:00</span>
+          <span class="player__volume-icon">\uD83D\uDD0A</span>
+          <input class="player__volume-slider" type="range" min="0" max="100" value="80" />
+        </div>
+        <div class="player__bottom-row">
           <div class="player__meta">
             <img class="player__cover" src="" alt="" />
             <div class="player__info">
@@ -101,16 +115,7 @@ export class AudioPlayer {
               </div>
             </div>
           </div>
-          <div class="player__controls">
-            <button class="player__btn-play" title="Lecture / Pause"></button>
-            <span class="player__time-current">0:00</span>
-            <span class="player__time-sep">/</span>
-            <span class="player__time-total">0:00</span>
-          </div>
-          <div class="player__volume">
-            <span class="player__volume-icon">🔊</span>
-            <input class="player__volume-slider" type="range" min="0" max="100" value="80" />
-          </div>
+          <canvas class="player__spectrum" width="0" height="0"></canvas>
         </div>
       </div>
     `;
@@ -130,6 +135,10 @@ export class AudioPlayer {
     this.btnPlay = this.el.querySelector(".player__btn-play")!;
     this.volumeSlider = this.el.querySelector(".player__volume-slider")!;
     this.waveformEl = this.el.querySelector(".player__waveform-row")!;
+    this.spectrumCanvas = this.el.querySelector(".player__spectrum")!;
+    this.spectrumCanvas.title = "Cliquer pour changer de mode";
+    this.spectrumCanvas.style.cursor = "pointer";
+    this.spectrumCanvas.addEventListener("click", () => this.toggleVizMode());
 
     this.initEditableFields();
   }
@@ -229,7 +238,10 @@ export class AudioPlayer {
     const blob = new Blob([buffer], { type: mimeFromPath(filePath) });
     this.blobUrl = URL.createObjectURL(blob);
 
-    // Destroy previous WaveSurfer instance
+    // Destroy previous instance
+    this.stopSpectrum();
+    if (this.sourceNode) { this.sourceNode.disconnect(); this.sourceNode = null; }
+    if (this.analyser) { this.analyser.disconnect(); this.analyser = null; }
     if (this.wavesurfer) {
       this.wavesurfer.destroy();
       this.wavesurfer = null;
@@ -255,6 +267,7 @@ export class AudioPlayer {
       this.timeTotalEl.textContent = formatTime(
         this.wavesurfer!.getDuration(),
       );
+      this.initSpectrum();
       this.wavesurfer!.play();
       this.setPlaying(true);
     });
@@ -323,5 +336,157 @@ export class AudioPlayer {
 
   private setPlaying(playing: boolean): void {
     this.btnPlay.classList.toggle("is-playing", playing);
+  }
+
+  /* ── Real-time visualisation ─────────────────────── */
+
+  private initSpectrum(): void {
+    if (!this.wavesurfer) return;
+
+    const media = this.wavesurfer.getMediaElement();
+    if (!media) return;
+
+    if (!this.audioCtx) {
+      this.audioCtx = new AudioContext();
+    }
+
+    if (this.sourceNode) {
+      this.sourceNode.disconnect();
+      this.sourceNode = null;
+    }
+    if (this.analyser) {
+      this.analyser.disconnect();
+      this.analyser = null;
+    }
+
+    this.analyser = this.audioCtx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.analyser.smoothingTimeConstant = 0.8;
+
+    this.sourceNode = this.audioCtx.createMediaElementSource(media);
+    this.sourceNode.connect(this.analyser);
+    this.analyser.connect(this.audioCtx.destination);
+
+    this.startVizLoop();
+  }
+
+  private toggleVizMode(): void {
+    this.vizMode = this.vizMode === "spectrum" ? "oscilloscope" : "spectrum";
+  }
+
+  private startVizLoop(): void {
+    cancelAnimationFrame(this.vizRafId);
+
+    const canvas = this.spectrumCanvas;
+    const ctx = canvas.getContext("2d")!;
+    const analyser = this.analyser!;
+
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    const timeData = new Uint8Array(analyser.fftSize);
+
+    const draw = () => {
+      this.vizRafId = requestAnimationFrame(draw);
+
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = rect.width * dpr;
+      const h = rect.height * dpr;
+
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+
+      ctx.clearRect(0, 0, w, h);
+
+      if (this.vizMode === "spectrum") {
+        this.drawSpectrum(ctx, analyser, freqData, w, h, dpr);
+      } else {
+        this.drawOscilloscope(ctx, analyser, timeData, w, h, dpr);
+      }
+    };
+
+    draw();
+  }
+
+  private drawSpectrum(
+    ctx: CanvasRenderingContext2D,
+    analyser: AnalyserNode,
+    dataArray: Uint8Array,
+    w: number, h: number, dpr: number,
+  ): void {
+    analyser.getByteFrequencyData(dataArray);
+
+    const barCount = 128;
+    const barWidth = w / barCount;
+    const gap = 1 * dpr;
+
+    for (let i = 0; i < barCount; i++) {
+      const v = dataArray[i] / 255;
+      const barH = v * h;
+      const x = i * barWidth;
+
+      const hue = 340 + (i / barCount) * 40;
+      ctx.fillStyle = `hsla(${hue}, 75%, ${50 + v * 20}%, ${0.6 + v * 0.4})`;
+      ctx.fillRect(x + gap / 2, h - barH, barWidth - gap, barH);
+    }
+  }
+
+  private drawOscilloscope(
+    ctx: CanvasRenderingContext2D,
+    analyser: AnalyserNode,
+    dataArray: Uint8Array,
+    w: number, h: number, dpr: number,
+  ): void {
+    analyser.getByteTimeDomainData(dataArray);
+
+    const cx = w / 2;
+    const cy = h / 2;
+    const baseRadius = Math.min(cx, cy) * 0.55;
+    const maxDeform = baseRadius * 0.6;
+    const len = dataArray.length;
+    const step = (Math.PI * 2) / len;
+
+    ctx.lineWidth = 0.5 * dpr;
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.shadowColor = "#e94560";
+    ctx.shadowBlur = 12 * dpr;
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeStyle = "#e94560";
+
+    ctx.beginPath();
+    for (let i = 0; i <= len; i++) {
+      const idx = i % len;
+      const sample = (dataArray[idx] - 128) / 128;
+      const r = baseRadius + sample * maxDeform;
+      const angle = idx * step - Math.PI / 2;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseRadius + maxDeform);
+    grad.addColorStop(0, "rgba(233, 69, 96, 0.03)");
+    grad.addColorStop(0.7, "rgba(233, 69, 96, 0.06)");
+    grad.addColorStop(1, "rgba(233, 69, 96, 0)");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  private stopSpectrum(): void {
+    cancelAnimationFrame(this.vizRafId);
+    this.vizRafId = 0;
+
+    const ctx = this.spectrumCanvas.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, this.spectrumCanvas.width, this.spectrumCanvas.height);
   }
 }

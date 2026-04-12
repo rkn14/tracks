@@ -6,6 +6,7 @@ const storePath = path.join(app.getPath("userData"), "state.json");
 
 let cache: Record<string, unknown> = {};
 let loaded = false;
+let writeChain: Promise<void> = Promise.resolve();
 
 async function ensureLoaded(): Promise<void> {
   if (loaded) return;
@@ -26,5 +27,10 @@ export async function storeGet<T>(key: string): Promise<T | undefined> {
 export async function storeSet(key: string, value: unknown): Promise<void> {
   await ensureLoaded();
   cache[key] = value;
-  await fs.writeFile(storePath, JSON.stringify(cache, null, 2), "utf-8");
+
+  const p = writeChain.then(() =>
+    fs.writeFile(storePath, JSON.stringify(cache, null, 2), "utf-8"),
+  );
+  writeChain = p.catch(() => {});
+  await p;
 }

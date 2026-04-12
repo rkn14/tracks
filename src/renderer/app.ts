@@ -26,16 +26,39 @@ export async function initApp(): Promise<void> {
 
   // ── Settings panel ────────────────────────────
   const settingsOverlay = document.getElementById("settings-overlay")!;
+  const libraryInput = document.getElementById("input-library-folder") as HTMLInputElement;
   const openaiInput = document.getElementById("input-openai-key") as HTMLInputElement;
   const genrePromptInput = document.getElementById("input-genre-prompt") as HTMLTextAreaElement;
 
+  // Tab switching
+  const tabs = settingsOverlay.querySelectorAll<HTMLButtonElement>(".settings-tab");
+  const pages = settingsOverlay.querySelectorAll<HTMLElement>(".settings-page");
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("is-active"));
+      pages.forEach((p) => p.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      const target = tab.dataset.tab!;
+      settingsOverlay.querySelector(`.settings-page[data-page="${target}"]`)?.classList.add("is-active");
+    });
+  });
+
+  // Browse library folder
+  document.getElementById("btn-browse-library")?.addEventListener("click", async () => {
+    const folder = await electronApi.dialog.selectFolder("Sélectionner le dossier Library");
+    if (folder) libraryInput.value = folder;
+  });
+
   const openSettings = async () => {
-    const [savedKey, savedPrompt] = await Promise.all([
+    const [savedKey, savedPrompt, savedLibrary] = await Promise.all([
       electronApi.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
       electronApi.store.get<string>(STORE_KEYS.GENRE_PROMPT),
+      electronApi.store.get<string>(STORE_KEYS.LIBRARY_FOLDER),
     ]);
     openaiInput.value = savedKey ?? "";
     genrePromptInput.value = savedPrompt ?? "";
+    libraryInput.value = savedLibrary ?? "";
     settingsOverlay.hidden = false;
   };
 
@@ -43,11 +66,18 @@ export async function initApp(): Promise<void> {
     settingsOverlay.hidden = true;
   };
 
+  let rightPanel: FileExplorer | null = null;
+
   const saveSettings = async () => {
+    const newLibrary = libraryInput.value.trim();
     await Promise.all([
       electronApi.store.set(STORE_KEYS.OPENAI_API_KEY, openaiInput.value.trim()),
       electronApi.store.set(STORE_KEYS.GENRE_PROMPT, genrePromptInput.value),
+      electronApi.store.set(STORE_KEYS.LIBRARY_FOLDER, newLibrary),
     ]);
+    if (rightPanel && newLibrary) {
+      await rightPanel.setLockedRoot(newLibrary);
+    }
     closeSettings();
   };
 
@@ -67,8 +97,8 @@ export async function initApp(): Promise<void> {
   const leftState = await electronApi.store.get<PanelState>(
     STORE_KEYS.LEFT_PANEL,
   );
-  const rightState = await electronApi.store.get<PanelState>(
-    STORE_KEYS.RIGHT_PANEL,
+  const savedLibrary = await electronApi.store.get<string>(
+    STORE_KEYS.LIBRARY_FOLDER,
   );
 
   // ── File explorers ───────────────────────────
@@ -76,15 +106,16 @@ export async function initApp(): Promise<void> {
     document.getElementById("panel-left")!,
     "left",
   );
-  const rightPanel = new FileExplorer(
+  rightPanel = new FileExplorer(
     document.getElementById("panel-right")!,
     "right",
   );
 
-  await Promise.all([
-    leftPanel.init(leftState?.currentPath),
-    rightPanel.init(rightState?.currentPath),
-  ]);
+  await leftPanel.init(leftState?.currentPath);
+  await rightPanel.init();
+  if (savedLibrary) {
+    await rightPanel.setLockedRoot(savedLibrary);
+  }
 
   // After a move/delete, the other panel asks to be refreshed
   eventBus.on("refresh-panel", ({ panelId }) => {

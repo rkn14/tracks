@@ -1,4 +1,4 @@
-import { BrowserWindow, type IpcMain, app } from "electron";
+import { BrowserWindow, type IpcMain, app, dialog } from "electron";
 import fs from "fs/promises";
 import { IpcChannel } from "@shared/types";
 import {
@@ -123,6 +123,16 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     IpcChannel.AI_FETCH_GENRES,
     (_, prompt: string, apiKey: string) => fetchGenresFromAI(prompt, apiKey),
   );
+
+  // ── Dialog ───────────────────────────────────
+  ipcMain.handle(IpcChannel.DIALOG_SELECT_FOLDER, async (event, title?: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(win!, {
+      title: title ?? "Sélectionner un dossier",
+      properties: ["openDirectory"],
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
 
   // ── Store ────────────────────────────────────
   ipcMain.handle(IpcChannel.STORE_GET, (_, key: string) => storeGet(key));

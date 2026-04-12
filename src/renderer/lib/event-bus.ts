@@ -1,6 +1,7 @@
 export type EventMap = {
   "play-file": { filePath: string };
   "refresh-panel": { panelId: "left" | "right" };
+  "clipboard-changed": Record<string, never>;
 };
 
 type Handler<T> = (data: T) => void;

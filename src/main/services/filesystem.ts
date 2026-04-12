@@ -244,12 +244,29 @@ export async function copyEntry(
   srcPath: string,
   destDir: string,
 ): Promise<string> {
+  const srcNorm = path.resolve(srcPath).toLowerCase();
+  const destDirNorm = path.resolve(destDir).toLowerCase();
   const name = path.basename(srcPath);
+  const finalDest = path.resolve(destDir, name).toLowerCase();
+
+  if (finalDest === srcNorm) {
+    throw new Error("La source et la destination sont identiques");
+  }
+
+  if (destDirNorm === srcNorm || destDirNorm.startsWith(srcNorm + path.sep)) {
+    throw new Error("Impossible de copier un dossier dans lui-même ou un sous-dossier");
+  }
+
+  if (finalDest.startsWith(srcNorm + path.sep)) {
+    throw new Error("Impossible de copier un dossier dans un de ses sous-dossiers");
+  }
+
   const destPath = path.join(destDir, name);
   const stat = await fs.stat(srcPath);
 
   if (stat.isDirectory()) {
-    await copyDirRecursive(srcPath, destPath);
+    const snapshot = await fs.readdir(srcPath, { withFileTypes: true });
+    await copyDirRecursive(srcPath, destPath, snapshot);
   } else {
     await fs.copyFile(srcPath, destPath);
   }
@@ -257,11 +274,30 @@ export async function copyEntry(
   return destPath;
 }
 
-async function copyDirRecursive(src: string, dest: string): Promise<void> {
+async function copyDirRecursive(
+  src: string,
+  dest: string,
+  preloadedEntries?: import("fs").Dirent[],
+): Promise<void> {
+  const srcNorm = path.resolve(src).toLowerCase();
+  const destNorm = path.resolve(dest).toLowerCase();
+
+  if (destNorm === srcNorm || destNorm.startsWith(srcNorm + path.sep)) {
+    throw new Error("Copie récursive détectée, abandon");
+  }
+
   await fs.mkdir(dest, { recursive: true });
-  const entries = await fs.readdir(src, { withFileTypes: true });
+
+  const entries = preloadedEntries ?? await fs.readdir(src, { withFileTypes: true });
+
   for (const entry of entries) {
     const srcChild = path.join(src, entry.name);
+    const srcChildNorm = path.resolve(srcChild).toLowerCase();
+
+    if (srcChildNorm === destNorm || destNorm.startsWith(srcChildNorm + path.sep)) {
+      continue;
+    }
+
     const destChild = path.join(dest, entry.name);
     if (entry.isDirectory()) {
       await copyDirRecursive(srcChild, destChild);

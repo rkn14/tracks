@@ -2,6 +2,7 @@ export interface ContextMenuItem {
   label: string;
   action: () => void;
   separator?: false;
+  disabled?: boolean;
 }
 
 export interface ContextMenuSeparator {
@@ -37,11 +38,16 @@ class ContextMenu {
       const item = document.createElement("button");
       item.className = "context-menu__item";
       item.textContent = entry.label;
-      item.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.hide();
-        entry.action();
-      });
+      if (entry.disabled) {
+        item.classList.add("context-menu__item--disabled");
+        item.disabled = true;
+      } else {
+        item.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.hide();
+          entry.action();
+        });
+      }
       this.el.appendChild(item);
     }
 

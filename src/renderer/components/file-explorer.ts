@@ -29,6 +29,15 @@ interface TreeNode {
   children: TreeNode[];
 }
 
+// ── Clipboard (shared across panels) ────────────
+
+interface ClipboardData {
+  paths: string[];
+  mode: "cut" | "copy";
+}
+
+let clipboard: ClipboardData | null = null;
+
 // ── FileExplorer ────────────────────────────────
 
 export class FileExplorer {
@@ -40,9 +49,12 @@ export class FileExplorer {
   private entries: FileEntry[] = [];
   private volumes: Volume[] = [];
   private loading = false;
+  private lockedRoot: string | null = null;
 
   private treeRoots: TreeNode[] = [];
   private selectedNode: TreeNode | null = null;
+  private renameClickTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastClickedNodePath: string | null = null;
   private selectedEntry: FileEntry | null = null;
   private selectedEntries: Set<FileEntry> = new Set();
 
@@ -110,12 +122,42 @@ export class FileExplorer {
           this.promptDeleteNode(this.selectedNode);
         }
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === "x") {
+        e.preventDefault();
+        this.clipboardAction("cut");
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+        e.preventDefault();
+        this.clipboardAction("copy");
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+        e.preventDefault();
+        this.pasteFromClipboard();
+      }
       if (e.key === "ArrowUp" || e.key === "ArrowDown" ||
           e.key === "ArrowLeft" || e.key === "ArrowRight") {
         this.handleTreeKeyboard(e);
       }
     });
     this.el.tabIndex = -1;
+
+    eventBus.on("clipboard-changed", () => this.applyCutStyle());
+  }
+
+  private applyCutStyle(): void {
+    const cutPaths = clipboard?.mode === "cut"
+      ? new Set(clipboard.paths.map((p) => p.replace(/[\\/]+$/, "").toLowerCase()))
+      : new Set<string>();
+
+    this.contentEl.querySelectorAll<HTMLElement>(".fe-row").forEach((row) => {
+      const p = row.dataset.path?.replace(/[\\/]+$/, "").toLowerCase() ?? "";
+      row.classList.toggle("is-cut", cutPaths.has(p));
+    });
+
+    this.treeEl.querySelectorAll<HTMLElement>(".fe-tree-item").forEach((row) => {
+      const p = row.dataset.nodePath?.replace(/[\\/]+$/, "").toLowerCase() ?? "";
+      row.classList.toggle("is-cut", cutPaths.has(p));
+    });
   }
 
   private initDividerResize(): void {
@@ -156,28 +198,31 @@ export class FileExplorer {
   private async handleDrop(
     sourcePaths: string[],
     destDir: string,
-    sourceId: string,
   ): Promise<void> {
-    let copied = 0;
+    const validPaths = sourcePaths.filter((p) => {
+      const parentDir = p.replace(/[\\/][^\\/]+$/, "");
+      return parentDir.toLowerCase() !== destDir.toLowerCase();
+    });
+    if (validPaths.length === 0) return;
+
+    let moved = 0;
     const errors: string[] = [];
 
-    for (const p of sourcePaths) {
+    for (const p of validPaths) {
       try {
         await this.api.fs.copy(p, destDir);
-        copied++;
+        moved++;
         try { await this.api.fs.delete(p); } catch { /* best effort */ }
       } catch (err) {
         errors.push(`${p.replace(/.*[\\/]/, "")}: ${err}`);
       }
     }
 
-    const otherPanelId: PanelId = sourceId as PanelId;
-    await this.refresh();
-    eventBus.emit("refresh-panel", { panelId: otherPanelId });
+    await this.refreshBoth();
 
     if (errors.length > 0) {
       await showAlert(
-        `${copied} fichier(s) déplacé(s).\n\nErreurs :\n${errors.join("\n")}`,
+        `${moved} fichier(s) déplacé(s).\n\nErreurs :\n${errors.join("\n")}`,
       );
     }
   }
@@ -202,10 +247,9 @@ export class FileExplorer {
       dropTarget.classList.remove("fe-drop-target");
 
       const raw = e.dataTransfer?.getData("application/x-tracks-files");
-      const sourceId = e.dataTransfer?.getData("text/x-source-panel");
-      if (!raw || sourceId === this.panelId || !this.currentPath) return;
+      if (!raw || !this.currentPath) return;
 
-      await this.handleDrop(JSON.parse(raw), this.currentPath, sourceId);
+      await this.handleDrop(JSON.parse(raw), this.currentPath);
     };
 
     dropTarget.addEventListener("dragover", onDragOver);
@@ -224,14 +268,13 @@ export class FileExplorer {
       if (target) target.classList.remove("fe-drop-target");
 
       const raw = e.dataTransfer?.getData("application/x-tracks-files");
-      const sourceId = e.dataTransfer?.getData("text/x-source-panel");
-      if (!raw || sourceId === this.panelId) return;
+      if (!raw) return;
 
       const treeItem = (e.target as HTMLElement).closest<HTMLElement>(".fe-tree-item");
       const destPath = treeItem?.dataset.nodePath;
       if (!destPath) return;
 
-      await this.handleDrop(JSON.parse(raw), destPath, sourceId);
+      await this.handleDrop(JSON.parse(raw), destPath);
     });
   }
 
@@ -275,6 +318,33 @@ export class FileExplorer {
 
   getCurrentPath(): string {
     return this.currentPath;
+  }
+
+  async setLockedRoot(rootPath: string): Promise<void> {
+    this.lockedRoot = rootPath || null;
+    this.pathInput.readOnly = !!this.lockedRoot;
+
+    if (!rootPath) return;
+
+    this.treeRoots = [{
+      name: rootPath.split(/[\\/]/).pop() || rootPath,
+      path: rootPath,
+      expanded: false,
+      loaded: false,
+      children: [],
+    }];
+
+    await this.expandToPath(rootPath);
+    const node = this.findNode(rootPath);
+    if (node) {
+      this.selectedNode = node;
+      if (!node.loaded) await this.loadChildren(node);
+      node.expanded = true;
+    }
+    try {
+      await this.loadContent(rootPath);
+    } catch { /* folder may not exist */ }
+    this.renderTree();
   }
 
   async refresh(): Promise<void> {
@@ -351,6 +421,33 @@ export class FileExplorer {
       node.expanded = false;
     }
     this.renderTree();
+  }
+
+  private handleTreeClick(node: TreeNode): void {
+    if (this.renameClickTimer) {
+      clearTimeout(this.renameClickTimer);
+      this.renameClickTimer = null;
+    }
+
+    const wasSelected = this.selectedNode === node && this.lastClickedNodePath === node.path;
+    this.lastClickedNodePath = node.path;
+
+    if (wasSelected) {
+      this.renameClickTimer = setTimeout(() => {
+        this.renameClickTimer = null;
+        const entry: FileEntry = {
+          name: node.name,
+          path: node.path,
+          isDirectory: true,
+          extension: "",
+          size: 0,
+          modifiedAt: 0,
+        };
+        this.promptRename(entry);
+      }, 400);
+    } else {
+      this.onNodeSelect(node);
+    }
   }
 
   private async onNodeSelect(node: TreeNode): Promise<void> {
@@ -458,6 +555,7 @@ export class FileExplorer {
     }
     const selected = this.treeEl.querySelector(".is-selected");
     selected?.scrollIntoView({ block: "nearest" });
+    this.applyCutStyle();
   }
 
   private createTreeItem(node: TreeNode, depth: number): HTMLElement {
@@ -487,7 +585,7 @@ export class FileExplorer {
 
     row.append(arrow, label);
     row.dataset.nodePath = node.path;
-    row.addEventListener("click", () => this.onNodeSelect(node));
+    row.addEventListener("click", () => this.handleTreeClick(node));
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -558,12 +656,14 @@ export class FileExplorer {
       this.pathInput.value = dirPath;
       this.el.dataset.currentPath = dirPath;
       this.renderContent();
+      this.applyCutStyle();
     } finally {
       this.loading = false;
     }
   }
 
   private persist(dirPath: string): void {
+    if (this.lockedRoot) return;
     this.api.store
       .set(this.panelId + "Panel", { currentPath: dirPath })
       .catch(() => {});
@@ -709,6 +809,26 @@ export class FileExplorer {
     });
     items.push({ separator: true });
 
+    const clipPaths = this.selectedEntries.size > 1 && this.selectedEntries.has(entry)
+      ? [...this.selectedEntries].map((e) => e.path)
+      : [entry.path];
+
+    items.push({
+      label: "✂️  Couper",
+      action: () => { clipboard = { paths: clipPaths, mode: "cut" }; eventBus.emit("clipboard-changed", {}); },
+    });
+    items.push({
+      label: "📋  Copier",
+      action: () => { clipboard = { paths: clipPaths, mode: "copy" }; eventBus.emit("clipboard-changed", {}); },
+    });
+    const pasteTarget = entry.isDirectory ? entry.path : this.currentPath;
+    items.push({
+      label: "📌  Coller",
+      action: () => this.pasteFromClipboard(pasteTarget),
+      disabled: !clipboard || clipboard.paths.length === 0,
+    });
+    items.push({ separator: true });
+
     items.push({
       label: "✏️  Renommer",
       action: () => this.promptRename(entry),
@@ -793,6 +913,63 @@ export class FileExplorer {
       if (node.children.length > 0) {
         this.updateNodePaths(node.children, oldPrefix, newPrefix);
       }
+    }
+  }
+
+  private clipboardAction(mode: "cut" | "copy"): void {
+    const paths: string[] = [];
+    if (this.selectedEntries.size > 0) {
+      for (const e of this.selectedEntries) paths.push(e.path);
+    } else if (this.selectedNode) {
+      paths.push(this.selectedNode.path);
+    }
+    if (paths.length > 0) {
+      clipboard = { paths, mode };
+      eventBus.emit("clipboard-changed", {});
+    }
+  }
+
+  private async pasteFromClipboard(targetDir?: string): Promise<void> {
+    if (!clipboard || clipboard.paths.length === 0) return;
+    const destDir = targetDir || this.currentPath;
+    if (!destDir) {
+      await showAlert("Sélectionnez d'abord un dossier de destination.");
+      return;
+    }
+
+    const { paths, mode } = clipboard;
+    const dest = destDir.replace(/[\\/]+$/, "").toLowerCase();
+    const errors: string[] = [];
+
+    for (const srcPath of paths) {
+      const src = srcPath.replace(/[\\/]+$/, "").toLowerCase();
+
+      if (dest === src || dest.startsWith(src + "\\") || dest.startsWith(src + "/")) {
+        const name = srcPath.split(/[\\/]/).pop() ?? srcPath;
+        errors.push(`${name}: impossible de coller dans le dossier source ou un sous-dossier`);
+        continue;
+      }
+
+      try {
+        await this.api.fs.copy(srcPath, destDir);
+        if (mode === "cut") {
+          try { await this.api.fs.delete(srcPath); } catch { /* best effort */ }
+        }
+      } catch (err) {
+        const name = srcPath.split(/[\\/]/).pop() ?? srcPath;
+        errors.push(`${name}: ${err}`);
+      }
+    }
+
+    if (mode === "cut") {
+      clipboard = null;
+      eventBus.emit("clipboard-changed", {});
+    }
+
+    await this.refreshBoth();
+
+    if (errors.length > 0) {
+      await showAlert(`Erreurs :\n${errors.join("\n")}`);
     }
   }
 

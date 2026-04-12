@@ -60,6 +60,11 @@ const electronApi: ElectronApi = {
       ipcRenderer.invoke(IpcChannel.AI_FETCH_GENRES, prompt, apiKey),
   },
 
+  dialog: {
+    selectFolder: (title?) =>
+      ipcRenderer.invoke(IpcChannel.DIALOG_SELECT_FOLDER, title),
+  },
+
   store: {
     get: (key) => ipcRenderer.invoke(IpcChannel.STORE_GET, key),
     set: (key, value) => ipcRenderer.invoke(IpcChannel.STORE_SET, key, value),

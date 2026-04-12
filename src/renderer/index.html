@@ -16,14 +16,31 @@
           <span class="settings-title">Paramètres</span>
           <button class="settings-close" id="settings-close">&#x2715;</button>
         </div>
-        <div class="settings-body">
-          <div class="settings-field">
-            <label class="settings-label" for="input-openai-key">Clé API OpenAI</label>
-            <input class="settings-input" id="input-openai-key" type="password" placeholder="sk-..." spellcheck="false" />
-          </div>
-          <div class="settings-field">
-            <label class="settings-label" for="input-genre-prompt">Retrieve Genre Prompt</label>
-            <textarea class="settings-textarea" id="input-genre-prompt" rows="6" spellcheck="false" placeholder="Ex: Based on the artist and title, return the music genre..."></textarea>
+        <div class="settings-main">
+          <nav class="settings-tabs">
+            <button class="settings-tab is-active" data-tab="general">Général</button>
+            <button class="settings-tab" data-tab="llm">LLM</button>
+          </nav>
+          <div class="settings-body">
+            <div class="settings-page is-active" data-page="general">
+              <div class="settings-field">
+                <label class="settings-label" for="input-library-folder">Library Folder</label>
+                <div class="settings-path-row">
+                  <input class="settings-input" id="input-library-folder" type="text" placeholder="Aucun dossier sélectionné" spellcheck="false" readonly />
+                  <button class="dialog-btn dialog-btn--primary settings-browse" id="btn-browse-library">Parcourir</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-page" data-page="llm">
+              <div class="settings-field">
+                <label class="settings-label" for="input-openai-key">Clé API OpenAI</label>
+                <input class="settings-input" id="input-openai-key" type="password" placeholder="sk-..." spellcheck="false" />
+              </div>
+              <div class="settings-field">
+                <label class="settings-label" for="input-genre-prompt">Retrieve Genre Prompt</label>
+                <textarea class="settings-textarea" id="input-genre-prompt" rows="6" spellcheck="false" placeholder="Ex: Based on the artist and title, return the music genre..."></textarea>
+              </div>
+            </div>
           </div>
         </div>
         <div class="settings-footer">

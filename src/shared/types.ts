@@ -27,6 +27,8 @@ export const IpcChannel = {
   AUDIO_WRITE_GENRES: "audio:write-genres",
   AUDIO_WRITE_METADATA: "audio:write-metadata",
 
+  DIALOG_SELECT_FOLDER: "dialog:select-folder",
+
   AI_FETCH_GENRES: "ai:fetch-genres",
 
   STORE_GET: "store:get",
@@ -168,6 +170,10 @@ export interface ElectronApi {
     writeGenres: (dirPath: string, genres: string[]) => Promise<number>;
     writeMetadata: (filePath: string, meta: WritableMetadata) => Promise<void>;
     fetchGenres: (prompt: string, apiKey: string) => Promise<AIGenreResult>;
+  };
+
+  dialog: {
+    selectFolder: (title?: string) => Promise<string | null>;
   };
 
   store: {

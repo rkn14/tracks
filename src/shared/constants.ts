@@ -15,4 +15,5 @@ export const STORE_KEYS = {
   PLAYER_VOLUME: "playerVolume",
   OPENAI_API_KEY: "openaiApiKey",
   GENRE_PROMPT: "genrePrompt",
+  LIBRARY_FOLDER: "libraryFolder",
 } as const;
