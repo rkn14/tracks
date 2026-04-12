@@ -1,5 +1,5 @@
 import WaveSurfer from "wavesurfer.js";
-import type { AudioMetadata, ElectronApi } from "@shared/types";
+import type { AudioMetadata, ElectronApi, WritableMetadata } from "@shared/types";
 import { eventBus } from "../lib/event-bus";
 import { STORE_KEYS } from "@shared/constants";
 
@@ -28,6 +28,8 @@ export class AudioPlayer {
   private el: HTMLElement;
   private wavesurfer: WaveSurfer | null = null;
   private blobUrl: string | null = null;
+
+  private currentFilePath: string | null = null;
 
   private coverImg!: HTMLImageElement;
   private titleEl!: HTMLElement;
@@ -128,6 +130,70 @@ export class AudioPlayer {
     this.btnPlay = this.el.querySelector(".player__btn-play")!;
     this.volumeSlider = this.el.querySelector(".player__volume-slider")!;
     this.waveformEl = this.el.querySelector(".player__waveform-row")!;
+
+    this.initEditableFields();
+  }
+
+  private static readonly EDITABLE_FIELDS = new Set([
+    "title", "artist", "album", "genre", "year", "label", "bpm",
+  ]);
+
+  private initEditableFields(): void {
+    const fields = this.el.querySelectorAll<HTMLElement>(".player__value[data-field]");
+    for (const field of fields) {
+      const key = field.dataset.field!;
+      if (!AudioPlayer.EDITABLE_FIELDS.has(key)) continue;
+
+      field.classList.add("player__value--editable");
+      field.addEventListener("dblclick", () => this.startEditing(field, key));
+    }
+  }
+
+  private startEditing(span: HTMLElement, key: string): void {
+    if (!this.currentFilePath || span.querySelector("input")) return;
+
+    const currentValue = span.textContent ?? "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "player__inline-input";
+    input.value = currentValue;
+
+    span.textContent = "";
+    span.appendChild(input);
+    input.focus();
+    input.select();
+
+    const commit = async () => {
+      const newValue = input.value.trim();
+      span.textContent = newValue;
+      if (newValue !== currentValue) {
+        await this.saveField(key, newValue);
+      }
+    };
+
+    input.addEventListener("blur", () => commit());
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+      if (e.key === "Escape") { span.textContent = currentValue; }
+    });
+  }
+
+  private async saveField(key: string, value: string): Promise<void> {
+    if (!this.currentFilePath) return;
+    const meta: WritableMetadata = {};
+
+    if (key === "year" || key === "bpm") {
+      const num = parseInt(value);
+      (meta as Record<string, unknown>)[key] = isNaN(num) ? 0 : num;
+    } else {
+      (meta as Record<string, unknown>)[key] = value;
+    }
+
+    try {
+      await this.api.audio.writeMetadata(this.currentFilePath, meta);
+    } catch {
+      /* silent fail — value is already shown in the UI */
+    }
   }
 
   private bindEvents(): void {
@@ -150,6 +216,8 @@ export class AudioPlayer {
   }
 
   async load(filePath: string): Promise<void> {
+    this.currentFilePath = filePath;
+
     // Clean up previous blob URL
     if (this.blobUrl) {
       URL.revokeObjectURL(this.blobUrl);
@@ -175,7 +243,7 @@ export class AudioPlayer {
       barWidth: 2,
       barGap: 1,
       barRadius: 2,
-      height: 64,
+      height: "auto",
       normalize: true,
       url: this.blobUrl,
     });

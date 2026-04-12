@@ -24,6 +24,45 @@ export async function initApp(): Promise<void> {
     .getElementById("btn-close")
     ?.addEventListener("click", () => electronApi.window.close());
 
+  // ── Settings panel ────────────────────────────
+  const settingsOverlay = document.getElementById("settings-overlay")!;
+  const openaiInput = document.getElementById("input-openai-key") as HTMLInputElement;
+  const genrePromptInput = document.getElementById("input-genre-prompt") as HTMLTextAreaElement;
+
+  const openSettings = async () => {
+    const [savedKey, savedPrompt] = await Promise.all([
+      electronApi.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
+      electronApi.store.get<string>(STORE_KEYS.GENRE_PROMPT),
+    ]);
+    openaiInput.value = savedKey ?? "";
+    genrePromptInput.value = savedPrompt ?? "";
+    settingsOverlay.hidden = false;
+  };
+
+  const closeSettings = () => {
+    settingsOverlay.hidden = true;
+  };
+
+  const saveSettings = async () => {
+    await Promise.all([
+      electronApi.store.set(STORE_KEYS.OPENAI_API_KEY, openaiInput.value.trim()),
+      electronApi.store.set(STORE_KEYS.GENRE_PROMPT, genrePromptInput.value),
+    ]);
+    closeSettings();
+  };
+
+  document.getElementById("btn-settings")?.addEventListener("click", openSettings);
+  document.getElementById("settings-close")?.addEventListener("click", closeSettings);
+  document.getElementById("settings-cancel")?.addEventListener("click", closeSettings);
+  document.getElementById("settings-save")?.addEventListener("click", saveSettings);
+
+  settingsOverlay.addEventListener("click", (e) => {
+    if (e.target === settingsOverlay) closeSettings();
+  });
+  settingsOverlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeSettings();
+  });
+
   // ── Restore saved state ──────────────────────
   const leftState = await electronApi.store.get<PanelState>(
     STORE_KEYS.LEFT_PANEL,

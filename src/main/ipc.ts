@@ -10,9 +10,16 @@ import {
   showInExplorer,
   getHome,
   listConvertible,
+  listMp3,
+  getAllGenres,
+  mkdir,
+  copyEntry,
+  exists,
 } from "./services/filesystem";
 import { getAudioMetadata } from "./services/audio-metadata";
 import { convertFileToMp3 } from "./services/convert";
+import { writeGenresToMp3s, writeMetadata } from "./services/tag-writer";
+import { fetchGenresFromAI } from "./services/ai";
 import { storeGet, storeSet } from "./services/store";
 
 export function registerIpcHandlers(ipcMain: IpcMain): void {
@@ -63,6 +70,26 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     listConvertible(dirPath),
   );
 
+  ipcMain.handle(IpcChannel.FS_LIST_MP3, (_, dirPath: string) =>
+    listMp3(dirPath),
+  );
+
+  ipcMain.handle(IpcChannel.FS_GET_ALL_GENRES, (_, dirPath: string) =>
+    getAllGenres(dirPath),
+  );
+
+  ipcMain.handle(IpcChannel.FS_MKDIR, (_, dirPath: string) =>
+    mkdir(dirPath),
+  );
+
+  ipcMain.handle(IpcChannel.FS_COPY, (_, srcPath: string, destDir: string) =>
+    copyEntry(srcPath, destDir),
+  );
+
+  ipcMain.handle(IpcChannel.FS_EXISTS, (_, targetPath: string) =>
+    exists(targetPath),
+  );
+
   // ── Audio ────────────────────────────────────
   ipcMain.handle(IpcChannel.AUDIO_GET_METADATA, (_, filePath: string) =>
     getAudioMetadata(filePath),
@@ -79,6 +106,23 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       buffer.byteOffset + buffer.byteLength,
     );
   });
+
+  ipcMain.handle(
+    IpcChannel.AUDIO_WRITE_GENRES,
+    (_, dirPath: string, genres: string[]) => writeGenresToMp3s(dirPath, genres),
+  );
+
+  ipcMain.handle(
+    IpcChannel.AUDIO_WRITE_METADATA,
+    (_, filePath: string, meta: import("@shared/types").WritableMetadata) =>
+      writeMetadata(filePath, meta),
+  );
+
+  // ── AI ─────────────────────────────────────
+  ipcMain.handle(
+    IpcChannel.AI_FETCH_GENRES,
+    (_, prompt: string, apiKey: string) => fetchGenresFromAI(prompt, apiKey),
+  );
 
   // ── Store ────────────────────────────────────
   ipcMain.handle(IpcChannel.STORE_GET, (_, key: string) => storeGet(key));

@@ -71,7 +71,10 @@ export function showPrompt(
   });
 }
 
-export function showConfirm(message: string): Promise<boolean> {
+export function showConfirm(
+  message: string,
+  labels?: { yes?: string; no?: string },
+): Promise<boolean> {
   return new Promise((resolve) => {
     const overlay = createOverlay();
     const box = createBox(overlay);
@@ -87,11 +90,12 @@ export function showConfirm(message: string): Promise<boolean> {
     };
 
     addButtons(box, [
-      { label: "Annuler", action: () => close(false) },
-      { label: "Confirmer", primary: true, action: () => close(true) },
+      { label: labels?.no ?? "Annuler", action: () => close(false) },
+      { label: labels?.yes ?? "Confirmer", primary: true, action: () => close(true) },
     ]);
 
     overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") close(true);
       if (e.key === "Escape") close(false);
     });
     overlay.tabIndex = 0;
@@ -186,6 +190,170 @@ export function showConvertDialog(
 
     overlay.addEventListener("keydown", (e) => {
       if (e.key === "Escape") close(null);
+    });
+    overlay.tabIndex = 0;
+    requestAnimationFrame(() => overlay.focus());
+  });
+}
+
+export interface MetaIADialogInput {
+  artist: string;
+  album: string;
+  genres: string[];
+  mp3Files: { name: string; path: string }[];
+}
+
+export interface MetaIADialogResult {
+  retrieveGenres: boolean;
+}
+
+export function showMetaIADialog(
+  data: MetaIADialogInput,
+): Promise<MetaIADialogResult | null> {
+  return new Promise((resolve) => {
+    const overlay = createOverlay();
+    const box = createBox(overlay);
+    box.style.maxHeight = "75vh";
+    box.style.overflow = "hidden";
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.minWidth = "420px";
+
+    const title = document.createElement("div");
+    title.className = "dialog-message";
+    title.textContent = "META IA";
+    title.style.fontWeight = "700";
+    title.style.fontSize = "14px";
+    box.appendChild(title);
+
+    const fields = document.createElement("div");
+    fields.className = "meta-ia-fields";
+
+    const addReadonly = (label: string, value: string) => {
+      const row = document.createElement("div");
+      row.className = "meta-ia-row";
+      const lbl = document.createElement("span");
+      lbl.className = "meta-ia-label";
+      lbl.textContent = label;
+      const val = document.createElement("span");
+      val.className = "meta-ia-value";
+      val.textContent = value || "—";
+      row.append(lbl, val);
+      fields.appendChild(row);
+    };
+
+    addReadonly("Artiste", data.artist);
+    addReadonly("Album", data.album);
+    addReadonly("Genres actuels", data.genres.length > 0 ? data.genres.join(", ") : "Aucun");
+
+    box.appendChild(fields);
+
+    const listTitle = document.createElement("div");
+    listTitle.className = "dialog-message";
+    listTitle.textContent = `Fichiers MP3 (${data.mp3Files.length})`;
+    listTitle.style.fontSize = "12px";
+    listTitle.style.marginTop = "8px";
+    box.appendChild(listTitle);
+
+    const list = document.createElement("div");
+    list.className = "dialog-checklist";
+    for (const file of data.mp3Files) {
+      const row = document.createElement("div");
+      row.className = "meta-ia-file-row";
+      row.textContent = file.name;
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+
+    const optRow = document.createElement("label");
+    optRow.className = "dialog-check-row dialog-check-row--option";
+
+    const retrieveCb = document.createElement("input");
+    retrieveCb.type = "checkbox";
+    retrieveCb.checked = true;
+    retrieveCb.className = "dialog-checkbox";
+
+    const optLabel = document.createElement("span");
+    optLabel.className = "dialog-check-label";
+    optLabel.textContent = "Retrieve genres (via OpenAI)";
+
+    optRow.append(retrieveCb, optLabel);
+    box.appendChild(optRow);
+
+    const close = (value: MetaIADialogResult | null) => {
+      overlay.remove();
+      resolve(value);
+    };
+
+    addButtons(box, [
+      { label: "Annuler", action: () => close(null) },
+      {
+        label: "OK",
+        primary: true,
+        action: () => close({ retrieveGenres: retrieveCb.checked }),
+      },
+    ]);
+
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close(null);
+    });
+    overlay.tabIndex = 0;
+    requestAnimationFrame(() => overlay.focus());
+  });
+}
+
+export function showAutoFolderDialog(
+  entries: { artist: string; count: number }[],
+  totalFiles: number,
+  skipped: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = createOverlay();
+    const box = createBox(overlay);
+    box.style.maxHeight = "75vh";
+    box.style.overflow = "hidden";
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.minWidth = "400px";
+
+    const title = document.createElement("div");
+    title.className = "dialog-message";
+    title.style.fontWeight = "700";
+    title.textContent = `Organiser ${totalFiles - skipped} fichier(s) dans ${entries.length} sous-dossier(s)`;
+    box.appendChild(title);
+
+    const list = document.createElement("div");
+    list.className = "dialog-checklist";
+    for (const entry of entries) {
+      const row = document.createElement("div");
+      row.className = "meta-ia-file-row";
+      row.textContent = `${entry.artist}  (${entry.count})`;
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+
+    if (skipped > 0) {
+      const note = document.createElement("div");
+      note.className = "dialog-message";
+      note.style.fontSize = "11px";
+      note.style.color = "var(--color-text-muted)";
+      note.textContent = `${skipped} fichier(s) sans artiste seront ignorés.`;
+      box.appendChild(note);
+    }
+
+    const close = (value: boolean) => {
+      overlay.remove();
+      resolve(value);
+    };
+
+    addButtons(box, [
+      { label: "Annuler", action: () => close(false) },
+      { label: "Organiser", primary: true, action: () => close(true) },
+    ]);
+
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") close(true);
+      if (e.key === "Escape") close(false);
     });
     overlay.tabIndex = 0;
     requestAnimationFrame(() => overlay.focus());

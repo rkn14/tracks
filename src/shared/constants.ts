@@ -13,4 +13,6 @@ export const STORE_KEYS = {
   LEFT_PANEL: "leftPanel",
   RIGHT_PANEL: "rightPanel",
   PLAYER_VOLUME: "playerVolume",
+  OPENAI_API_KEY: "openaiApiKey",
+  GENRE_PROMPT: "genrePrompt",
 } as const;

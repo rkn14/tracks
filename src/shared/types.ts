@@ -14,11 +14,20 @@ export const IpcChannel = {
   FS_SHOW_IN_EXPLORER: "fs:show-in-explorer",
   FS_GET_HOME: "fs:get-home",
   FS_LIST_CONVERTIBLE: "fs:list-convertible",
+  FS_LIST_MP3: "fs:list-mp3",
+  FS_GET_ALL_GENRES: "fs:get-all-genres",
+  FS_MKDIR: "fs:mkdir",
+  FS_COPY: "fs:copy",
+  FS_EXISTS: "fs:exists",
 
   AUDIO_GET_METADATA: "audio:get-metadata",
   AUDIO_READ_FILE: "audio:read-file",
   AUDIO_CONVERT_FILE: "audio:convert-file",
   AUDIO_CONVERT_PROGRESS: "audio:convert-progress",
+  AUDIO_WRITE_GENRES: "audio:write-genres",
+  AUDIO_WRITE_METADATA: "audio:write-metadata",
+
+  AI_FETCH_GENRES: "ai:fetch-genres",
 
   STORE_GET: "store:get",
   STORE_SET: "store:set",
@@ -77,6 +86,16 @@ export interface AudioMetadata {
   lossless?: boolean;
 }
 
+export interface WritableMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  year?: number;
+  label?: string;
+  bpm?: number;
+}
+
 // ── Conversion ──────────────────────────────────
 
 export interface ConvertProgress {
@@ -90,6 +109,14 @@ export interface ConvertFileResult {
   sourcePath: string;
   destPath: string;
   error?: string;
+}
+
+// ── AI ──────────────────────────────────────────
+
+export interface AIGenreResult {
+  genres: string[];
+  certaintyPercentage: number;
+  comment: string;
 }
 
 // ── Persistence ────────────────────────────────
@@ -124,6 +151,11 @@ export interface ElectronApi {
     showInExplorer: (targetPath: string) => void;
     getHome: () => Promise<string>;
     listConvertible: (dirPath: string) => Promise<{ name: string; path: string }[]>;
+    listMp3: (dirPath: string) => Promise<{ name: string; path: string }[]>;
+    getAllGenres: (dirPath: string) => Promise<string[]>;
+    mkdir: (dirPath: string) => Promise<void>;
+    copy: (srcPath: string, destDir: string) => Promise<string>;
+    exists: (targetPath: string) => Promise<boolean>;
   };
 
   audio: {
@@ -133,6 +165,9 @@ export interface ElectronApi {
     onConvertProgress: (
       cb: (progress: ConvertProgress) => void,
     ) => () => void;
+    writeGenres: (dirPath: string, genres: string[]) => Promise<number>;
+    writeMetadata: (filePath: string, meta: WritableMetadata) => Promise<void>;
+    fetchGenres: (prompt: string, apiKey: string) => Promise<AIGenreResult>;
   };
 
   store: {

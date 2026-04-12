@@ -25,6 +25,16 @@ const electronApi: ElectronApi = {
     getHome: () => ipcRenderer.invoke(IpcChannel.FS_GET_HOME),
     listConvertible: (dirPath) =>
       ipcRenderer.invoke(IpcChannel.FS_LIST_CONVERTIBLE, dirPath),
+    listMp3: (dirPath) =>
+      ipcRenderer.invoke(IpcChannel.FS_LIST_MP3, dirPath),
+    getAllGenres: (dirPath) =>
+      ipcRenderer.invoke(IpcChannel.FS_GET_ALL_GENRES, dirPath),
+    mkdir: (dirPath) =>
+      ipcRenderer.invoke(IpcChannel.FS_MKDIR, dirPath),
+    copy: (srcPath, destDir) =>
+      ipcRenderer.invoke(IpcChannel.FS_COPY, srcPath, destDir),
+    exists: (targetPath) =>
+      ipcRenderer.invoke(IpcChannel.FS_EXISTS, targetPath),
   },
 
   audio: {
@@ -42,6 +52,12 @@ const electronApi: ElectronApi = {
         ipcRenderer.removeListener(IpcChannel.AUDIO_CONVERT_PROGRESS, handler);
       };
     },
+    writeGenres: (dirPath, genres) =>
+      ipcRenderer.invoke(IpcChannel.AUDIO_WRITE_GENRES, dirPath, genres),
+    writeMetadata: (filePath, meta) =>
+      ipcRenderer.invoke(IpcChannel.AUDIO_WRITE_METADATA, filePath, meta),
+    fetchGenres: (prompt, apiKey) =>
+      ipcRenderer.invoke(IpcChannel.AI_FETCH_GENRES, prompt, apiKey),
   },
 
   store: {

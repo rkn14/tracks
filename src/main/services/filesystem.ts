@@ -57,6 +57,7 @@ async function robustRename(src: string, dest: string): Promise<void> {
       return;
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EXDEV") break;
       if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw err;
       await sleep(RETRY_DELAY_MS * (attempt + 1));
     }
@@ -151,7 +152,13 @@ async function fallbackWindowsVolumes(): Promise<Volume[]> {
 }
 
 export async function readDirectory(dirPath: string): Promise<FileEntry[]> {
-  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await fs.readdir(dirPath, { withFileTypes: true });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const results: FileEntry[] = [];
 
   for (const entry of entries) {
@@ -199,8 +206,78 @@ export async function move(
 ): Promise<string> {
   const name = path.basename(srcPath);
   const destPath = path.join(destDir, name);
-  await robustRename(srcPath, destPath);
+
+  try {
+    await robustRename(srcPath, destPath);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EXDEV" || (err instanceof Error && err.message.includes("Renommage impossible"))) {
+      await crossDeviceMove(srcPath, destPath);
+    } else {
+      throw err;
+    }
+  }
+
   return destPath;
+}
+
+async function crossDeviceMove(src: string, dest: string): Promise<void> {
+  const stat = await fs.stat(src);
+
+  if (stat.isDirectory()) {
+    await fs.mkdir(dest, { recursive: true });
+    const entries = await fs.readdir(src, { withFileTypes: true });
+    for (const entry of entries) {
+      await crossDeviceMove(
+        path.join(src, entry.name),
+        path.join(dest, entry.name),
+      );
+    }
+    await fs.rm(src, { recursive: true, force: true });
+  } else {
+    await fs.copyFile(src, dest);
+    await fs.unlink(src);
+  }
+}
+
+export async function copyEntry(
+  srcPath: string,
+  destDir: string,
+): Promise<string> {
+  const name = path.basename(srcPath);
+  const destPath = path.join(destDir, name);
+  const stat = await fs.stat(srcPath);
+
+  if (stat.isDirectory()) {
+    await copyDirRecursive(srcPath, destPath);
+  } else {
+    await fs.copyFile(srcPath, destPath);
+  }
+
+  return destPath;
+}
+
+async function copyDirRecursive(src: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcChild = path.join(src, entry.name);
+    const destChild = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirRecursive(srcChild, destChild);
+    } else {
+      await fs.copyFile(srcChild, destChild);
+    }
+  }
+}
+
+export async function exists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function deleteEntry(targetPath: string): Promise<void> {
@@ -213,6 +290,45 @@ export function showInExplorer(targetPath: string): void {
 
 export function getHome(): string {
   return os.homedir();
+}
+
+export async function listMp3(
+  dirPath: string,
+): Promise<{ name: string; path: string }[]> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const results: { name: string; path: string }[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (path.extname(entry.name).toLowerCase() !== ".mp3") continue;
+    results.push({ name: entry.name, path: path.join(dirPath, entry.name) });
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  return results;
+}
+
+export async function getAllGenres(dirPath: string): Promise<string[]> {
+  const { parseFile } = await import("music-metadata");
+  const mp3s = await listMp3(dirPath);
+  const genres = new Set<string>();
+
+  for (const mp3 of mp3s) {
+    try {
+      const meta = await parseFile(mp3.path);
+      if (meta.common.genre) {
+        for (const g of meta.common.genre) genres.add(g);
+      }
+    } catch {
+      /* skip unreadable files */
+    }
+  }
+
+  return [...genres].sort();
+}
+
+export async function mkdir(dirPath: string): Promise<void> {
+  await fs.mkdir(dirPath);
 }
 
 const CONVERTIBLE_EXTS = new Set([".wav", ".aiff", ".aif", ".flac"]);

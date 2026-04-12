@@ -4,7 +4,8 @@ import {
   contextMenu,
   type ContextMenuEntry,
 } from "./context-menu";
-import { showPrompt, showConfirm, showAlert, showConvertDialog } from "./dialogs";
+import { showPrompt, showConfirm, showAlert, showConvertDialog, showMetaIADialog, showAutoFolderDialog } from "./dialogs";
+import { STORE_KEYS } from "@shared/constants";
 import { eventBus } from "../lib/event-bus";
 
 type PanelId = "left" | "right";
@@ -43,6 +44,7 @@ export class FileExplorer {
   private treeRoots: TreeNode[] = [];
   private selectedNode: TreeNode | null = null;
   private selectedEntry: FileEntry | null = null;
+  private selectedEntries: Set<FileEntry> = new Set();
 
   private treeEl!: HTMLElement;
   private contentEl!: HTMLElement;
@@ -57,14 +59,18 @@ export class FileExplorer {
   }
 
   private buildShell(): void {
-    const convertBtn = this.panelId === "left"
-      ? `<button class="fe-btn fe-btn--convert" data-action="convert" title="Convertir WAV / AIFF / FLAC → MP3">MP3</button>`
+    const leftButtons = this.panelId === "left"
+      ? `<button class="fe-btn fe-btn--convert" data-action="convert" title="Convertir WAV / AIFF / FLAC → MP3">MP3</button>` +
+        `<button class="fe-btn fe-btn--meta-ia" data-action="meta-ia" title="Récupérer les genres via IA">META IA</button>` +
+        `<button class="fe-btn fe-btn--autofolder" data-action="autofolder" title="Organiser les MP3 par artiste">Auto Folder</button>`
       : "";
 
     this.el.innerHTML = `
       <div class="fe-toolbar">
         <input class="fe-path" type="text" spellcheck="false" />
-        ${convertBtn}
+        <button class="fe-btn fe-btn--refresh" data-action="refresh" title="Rafraîchir">&#x21BB;</button>
+        <button class="fe-btn fe-btn--mkdir" data-action="mkdir" title="Nouveau dossier">&#x1F4C1;+</button>
+        ${leftButtons}
       </div>
       <div class="fe-body">
         <div class="fe-tree"></div>
@@ -78,17 +84,35 @@ export class FileExplorer {
     this.contentEl = this.el.querySelector(".fe-content")!;
     this.btnConvert = this.el.querySelector('[data-action="convert"]');
 
+    this.el.querySelector('[data-action="refresh"]')
+      ?.addEventListener("click", () => this.refresh());
+    this.el.querySelector('[data-action="mkdir"]')
+      ?.addEventListener("click", () => this.createFolder());
     this.btnConvert?.addEventListener("click", () => this.convertToMp3());
+    this.el.querySelector('[data-action="meta-ia"]')
+      ?.addEventListener("click", () => this.metaIA());
+    this.el.querySelector('[data-action="autofolder"]')
+      ?.addEventListener("click", () => this.autoFolder());
     this.pathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") this.selectPath(this.pathInput.value.trim());
     });
 
     this.initDividerResize();
+    this.initDropZone();
 
     this.el.addEventListener("keydown", (e) => {
-      if (e.key === "Delete" && this.selectedEntry) {
-        e.preventDefault();
-        this.promptDelete(this.selectedEntry);
+      if (e.key === "Delete") {
+        if (this.selectedEntries.size > 0) {
+          e.preventDefault();
+          this.promptDeleteSelection();
+        } else if (this.selectedNode) {
+          e.preventDefault();
+          this.promptDeleteNode(this.selectedNode);
+        }
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown" ||
+          e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        this.handleTreeKeyboard(e);
       }
     });
     this.el.tabIndex = -1;
@@ -126,6 +150,88 @@ export class FileExplorer {
       document.body.style.userSelect = "none";
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
+    });
+  }
+
+  private async handleDrop(
+    sourcePaths: string[],
+    destDir: string,
+    sourceId: string,
+  ): Promise<void> {
+    let copied = 0;
+    const errors: string[] = [];
+
+    for (const p of sourcePaths) {
+      try {
+        await this.api.fs.copy(p, destDir);
+        copied++;
+        try { await this.api.fs.delete(p); } catch { /* best effort */ }
+      } catch (err) {
+        errors.push(`${p.replace(/.*[\\/]/, "")}: ${err}`);
+      }
+    }
+
+    const otherPanelId: PanelId = sourceId as PanelId;
+    await this.refresh();
+    eventBus.emit("refresh-panel", { panelId: otherPanelId });
+
+    if (errors.length > 0) {
+      await showAlert(
+        `${copied} fichier(s) déplacé(s).\n\nErreurs :\n${errors.join("\n")}`,
+      );
+    }
+  }
+
+  private initDropZone(): void {
+    const dropTarget = this.contentEl;
+
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("text/x-source-panel")) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "copy";
+      dropTarget.classList.add("fe-drop-target");
+    };
+
+    const onDragLeave = (e: DragEvent) => {
+      if (e.relatedTarget && dropTarget.contains(e.relatedTarget as Node)) return;
+      dropTarget.classList.remove("fe-drop-target");
+    };
+
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      dropTarget.classList.remove("fe-drop-target");
+
+      const raw = e.dataTransfer?.getData("application/x-tracks-files");
+      const sourceId = e.dataTransfer?.getData("text/x-source-panel");
+      if (!raw || sourceId === this.panelId || !this.currentPath) return;
+
+      await this.handleDrop(JSON.parse(raw), this.currentPath, sourceId);
+    };
+
+    dropTarget.addEventListener("dragover", onDragOver);
+    dropTarget.addEventListener("dragleave", onDragLeave);
+    dropTarget.addEventListener("drop", onDrop);
+
+    this.treeEl.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer?.types.includes("text/x-source-panel")) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "copy";
+    });
+
+    this.treeEl.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const target = (e.target as HTMLElement).closest(".fe-tree-item");
+      if (target) target.classList.remove("fe-drop-target");
+
+      const raw = e.dataTransfer?.getData("application/x-tracks-files");
+      const sourceId = e.dataTransfer?.getData("text/x-source-panel");
+      if (!raw || sourceId === this.panelId) return;
+
+      const treeItem = (e.target as HTMLElement).closest<HTMLElement>(".fe-tree-item");
+      const destPath = treeItem?.dataset.nodePath;
+      if (!destPath) return;
+
+      await this.handleDrop(JSON.parse(raw), destPath, sourceId);
     });
   }
 
@@ -172,14 +278,32 @@ export class FileExplorer {
   }
 
   async refresh(): Promise<void> {
-    if (this.currentPath) {
-      await this.loadContent(this.currentPath);
-      if (this.selectedNode) {
-        this.selectedNode.loaded = false;
-        await this.loadChildren(this.selectedNode);
-      }
-      this.renderTree();
+    if (!this.currentPath) return;
+
+    let target = this.currentPath;
+    while (target) {
+      const ok = await this.api.fs.exists(target);
+      if (ok) break;
+      const parent = target.replace(/[\\/][^\\/]+$/, "");
+      if (parent === target) break;
+      target = parent;
     }
+
+    if (target !== this.currentPath) {
+      this.currentPath = target;
+      this.persist(target);
+      await this.expandToPath(target);
+      const node = this.findNode(target);
+      if (node) this.selectedNode = node;
+    }
+
+    await this.loadContent(this.currentPath);
+
+    if (this.selectedNode) {
+      this.selectedNode.loaded = false;
+      await this.loadChildren(this.selectedNode);
+    }
+    this.renderTree();
   }
 
   async selectPath(dirPath: string): Promise<void> {
@@ -287,6 +411,46 @@ export class FileExplorer {
 
   // ── Tree rendering ─────────────────────────────
 
+  private getVisibleNodes(nodes?: TreeNode[]): TreeNode[] {
+    const result: TreeNode[] = [];
+    for (const node of nodes ?? this.treeRoots) {
+      result.push(node);
+      if (node.expanded && node.children.length > 0) {
+        result.push(...this.getVisibleNodes(node.children));
+      }
+    }
+    return result;
+  }
+
+  private handleTreeKeyboard(e: KeyboardEvent): void {
+    if (!this.selectedNode) return;
+
+    e.preventDefault();
+
+    if (e.key === "ArrowRight") {
+      if (!this.selectedNode.expanded) {
+        this.toggleNode(this.selectedNode);
+      }
+      return;
+    }
+
+    if (e.key === "ArrowLeft") {
+      if (this.selectedNode.expanded) {
+        this.toggleNode(this.selectedNode);
+      }
+      return;
+    }
+
+    const visible = this.getVisibleNodes();
+    const idx = visible.indexOf(this.selectedNode);
+    if (idx === -1) return;
+
+    const nextIdx = e.key === "ArrowUp" ? idx - 1 : idx + 1;
+    if (nextIdx < 0 || nextIdx >= visible.length) return;
+
+    this.onNodeSelect(visible[nextIdx]);
+  }
+
   private renderTree(): void {
     this.treeEl.innerHTML = "";
     for (const root of this.treeRoots) {
@@ -322,11 +486,40 @@ export class FileExplorer {
     label.textContent = node.name;
 
     row.append(arrow, label);
+    row.dataset.nodePath = node.path;
     row.addEventListener("click", () => this.onNodeSelect(node));
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
       this.onTreeContextMenu(node, e.clientX, e.clientY);
+    });
+
+    row.draggable = true;
+    row.addEventListener("dragstart", (e) => {
+      e.stopPropagation();
+      e.dataTransfer!.setData("application/x-tracks-files", JSON.stringify([node.path]));
+      e.dataTransfer!.setData("text/x-source-panel", this.panelId);
+      e.dataTransfer!.effectAllowed = "copy";
+
+      const ghost = document.createElement("div");
+      ghost.className = "fe-drag-ghost";
+      ghost.textContent = node.name;
+      document.body.appendChild(ghost);
+      e.dataTransfer!.setDragImage(ghost, 0, 0);
+      requestAnimationFrame(() => ghost.remove());
+    });
+
+    row.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer?.types.includes("text/x-source-panel")) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "move";
+      row.classList.add("fe-drop-target");
+    });
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("fe-drop-target");
+    });
+    row.addEventListener("drop", () => {
+      row.classList.remove("fe-drop-target");
     });
 
     wrapper.appendChild(row);
@@ -357,6 +550,8 @@ export class FileExplorer {
   private async loadContent(dirPath: string): Promise<void> {
     this.loading = true;
     this.selectedEntry = null;
+    this.selectedEntries.clear();
+    this.lastClickedIndex = -1;
     try {
       this.entries = await this.api.fs.readDirectory(dirPath);
       this.currentPath = dirPath;
@@ -417,8 +612,8 @@ export class FileExplorer {
 
     row.append(iconSpan, nameSpan, sizeSpan, extSpan);
 
-    row.addEventListener("click", () => {
-      this.selectEntry(entry, row);
+    row.addEventListener("click", (e) => {
+      this.selectEntry(entry, row, e);
     });
     row.addEventListener("dblclick", () => {
       if (audioExtSet.has(entry.extension.toLowerCase())) {
@@ -428,8 +623,28 @@ export class FileExplorer {
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this.selectEntry(entry, row);
+      if (!this.selectedEntries.has(entry)) {
+        this.selectEntry(entry, row, e);
+      }
       this.onContextMenu(entry, e.clientX, e.clientY);
+    });
+
+    row.draggable = true;
+    row.addEventListener("dragstart", (e) => {
+      if (!this.selectedEntries.has(entry)) {
+        this.selectEntry(entry, row);
+      }
+      const paths = [...this.selectedEntries].map((en) => en.path);
+      e.dataTransfer!.setData("application/x-tracks-files", JSON.stringify(paths));
+      e.dataTransfer!.setData("text/x-source-panel", this.panelId);
+      e.dataTransfer!.effectAllowed = "copy";
+
+      const ghost = document.createElement("div");
+      ghost.className = "fe-drag-ghost";
+      ghost.textContent = `${paths.length} fichier(s)`;
+      document.body.appendChild(ghost);
+      e.dataTransfer!.setDragImage(ghost, 0, 0);
+      requestAnimationFrame(() => ghost.remove());
     });
 
     return row;
@@ -437,12 +652,43 @@ export class FileExplorer {
 
   // ── Interactions ───────────────────────────────
 
-  private selectEntry(entry: FileEntry, row: HTMLElement): void {
+  private lastClickedIndex = -1;
+
+  private selectEntry(entry: FileEntry, row: HTMLElement, e?: MouseEvent): void {
+    const files = this.entries.filter((en) => !en.isDirectory);
+    const index = files.indexOf(entry);
+
+    if (e?.ctrlKey || e?.metaKey) {
+      if (this.selectedEntries.has(entry)) {
+        this.selectedEntries.delete(entry);
+        row.classList.remove("is-selected");
+      } else {
+        this.selectedEntries.add(entry);
+        row.classList.add("is-selected");
+      }
+    } else if (e?.shiftKey && this.lastClickedIndex >= 0) {
+      const start = Math.min(this.lastClickedIndex, index);
+      const end = Math.max(this.lastClickedIndex, index);
+      this.selectedEntries.clear();
+      this.contentEl
+        .querySelectorAll(".fe-row.is-selected")
+        .forEach((el) => el.classList.remove("is-selected"));
+      const rows = this.contentEl.querySelectorAll(".fe-row");
+      for (let i = start; i <= end; i++) {
+        this.selectedEntries.add(files[i]);
+        rows[i]?.classList.add("is-selected");
+      }
+    } else {
+      this.selectedEntries.clear();
+      this.contentEl
+        .querySelectorAll(".fe-row.is-selected")
+        .forEach((el) => el.classList.remove("is-selected"));
+      this.selectedEntries.add(entry);
+      row.classList.add("is-selected");
+    }
+
+    this.lastClickedIndex = index;
     this.selectedEntry = entry;
-    this.contentEl
-      .querySelectorAll(".fe-row.is-selected")
-      .forEach((el) => el.classList.remove("is-selected"));
-    row.classList.add("is-selected");
     this.el.focus();
   }
 
@@ -475,10 +721,39 @@ export class FileExplorer {
 
     items.push({
       label: "🗑️  Supprimer",
-      action: () => this.promptDelete(entry),
+      action: () => {
+        if (this.selectedEntries.size > 1 && this.selectedEntries.has(entry)) {
+          this.promptDeleteSelection();
+        } else {
+          this.promptDelete(entry);
+        }
+      },
     });
 
     contextMenu.show(items, x, y);
+  }
+
+  private async createFolder(): Promise<void> {
+    if (!this.currentPath) {
+      await showAlert("Sélectionnez d'abord un dossier.");
+      return;
+    }
+    const name = await showPrompt("Nom du nouveau dossier :");
+    if (!name) return;
+    const sep = this.currentPath.includes("/") ? "/" : "\\";
+    const newPath = this.currentPath + sep + name;
+    try {
+      await this.api.fs.mkdir(newPath);
+
+      if (this.selectedNode) {
+        this.selectedNode.loaded = false;
+        await this.loadChildren(this.selectedNode);
+      }
+
+      await this.selectPath(newPath);
+    } catch (err) {
+      await showAlert(`Erreur lors de la création du dossier : ${err}`);
+    }
   }
 
   private async promptRename(entry: FileEntry): Promise<void> {
@@ -486,9 +761,38 @@ export class FileExplorer {
     if (!newName || newName === entry.name) return;
     try {
       await this.api.fs.rename(entry.path, newName);
-      await this.refresh();
+
+      if (entry.isDirectory) {
+        const parentDir = entry.path.substring(0, entry.path.lastIndexOf(entry.name)).replace(/[\\/]+$/, "");
+        const newDirPath = parentDir + (parentDir.endsWith("\\") || parentDir.endsWith("/") ? "" : "\\") + newName;
+
+        if (this.currentPath === entry.path || this.currentPath.startsWith(entry.path + "\\") || this.currentPath.startsWith(entry.path + "/")) {
+          this.currentPath = this.currentPath.replace(entry.path, newDirPath);
+        }
+
+        if (this.selectedNode) {
+          this.updateNodePaths(this.treeRoots, entry.path, newDirPath);
+          this.renderTree();
+        }
+      }
+
+      await this.refreshBoth();
     } catch (err) {
       await showAlert(`Erreur lors du renommage : ${err}`);
+    }
+  }
+
+  private updateNodePaths(nodes: TreeNode[], oldPrefix: string, newPrefix: string): void {
+    for (const node of nodes) {
+      if (node.path === oldPrefix) {
+        node.path = newPrefix;
+        node.name = newPrefix.split(/[\\/]/).pop() ?? node.name;
+      } else if (node.path.startsWith(oldPrefix + "\\") || node.path.startsWith(oldPrefix + "/")) {
+        node.path = newPrefix + node.path.substring(oldPrefix.length);
+      }
+      if (node.children.length > 0) {
+        this.updateNodePaths(node.children, oldPrefix, newPrefix);
+      }
     }
   }
 
@@ -504,11 +808,50 @@ export class FileExplorer {
     }
 
     try {
-      await this.api.fs.move(entry.path, otherPath);
-      await this.refresh();
-      eventBus.emit("refresh-panel", { panelId: otherPanelId });
+      await this.api.fs.copy(entry.path, otherPath);
+      try { await this.api.fs.delete(entry.path); } catch { /* best effort */ }
+      await this.refreshBoth();
     } catch (err) {
-      await showAlert(`Erreur lors du déplacement : ${err}`);
+      await showAlert(`Erreur lors de la copie : ${err}`);
+    }
+  }
+
+  private async promptDeleteSelection(): Promise<void> {
+    const entries = [...this.selectedEntries];
+    if (entries.length === 0) return;
+
+    const msg = entries.length === 1
+      ? `Supprimer « ${entries[0].name} » ?\nLe fichier sera déplacé dans la corbeille.`
+      : `Supprimer ${entries.length} fichier(s) ?\nIls seront déplacés dans la corbeille.`;
+
+    const confirmed = await showConfirm(msg);
+    if (!confirmed) return;
+
+    const errors: string[] = [];
+    for (const entry of entries) {
+      try {
+        await this.api.fs.delete(entry.path);
+      } catch (err) {
+        errors.push(`${entry.name}: ${err}`);
+      }
+    }
+    this.selectedEntries.clear();
+    await this.refreshBoth();
+    if (errors.length > 0) {
+      await showAlert(`Erreurs :\n${errors.join("\n")}`);
+    }
+  }
+
+  private async promptDeleteNode(node: TreeNode): Promise<void> {
+    const confirmed = await showConfirm(
+      `Supprimer le dossier « ${node.name} » ?\nIl sera déplacé dans la corbeille.`,
+    );
+    if (!confirmed) return;
+    try {
+      await this.api.fs.delete(node.path);
+      await this.refreshBoth();
+    } catch (err) {
+      await showAlert(`Erreur lors de la suppression : ${err}`);
     }
   }
 
@@ -519,9 +862,167 @@ export class FileExplorer {
     if (!confirmed) return;
     try {
       await this.api.fs.delete(entry.path);
-      await this.refresh();
+      await this.refreshBoth();
     } catch (err) {
       await showAlert(`Erreur lors de la suppression : ${err}`);
+    }
+  }
+
+  private async refreshBoth(): Promise<void> {
+    const otherPanelId: PanelId = this.panelId === "left" ? "right" : "left";
+    await this.refresh();
+    eventBus.emit("refresh-panel", { panelId: otherPanelId });
+  }
+
+  // ── Auto Folder ───────────────────────────────
+
+  private async autoFolder(): Promise<void> {
+    if (!this.currentPath) {
+      await showAlert("Sélectionnez d'abord un dossier.");
+      return;
+    }
+
+    const mp3Files = await this.api.fs.listMp3(this.currentPath);
+    if (mp3Files.length === 0) {
+      await showAlert("Aucun fichier MP3 dans ce dossier.");
+      return;
+    }
+
+    const artistMap = new Map<string, { name: string; path: string }[]>();
+    let skipped = 0;
+
+    for (const file of mp3Files) {
+      const meta = await this.api.audio.getMetadata(file.path);
+      const artist = meta.artist?.trim();
+      if (!artist) {
+        skipped++;
+        continue;
+      }
+      if (!artistMap.has(artist)) artistMap.set(artist, []);
+      artistMap.get(artist)!.push(file);
+    }
+
+    if (artistMap.size === 0) {
+      await showAlert("Aucun MP3 avec un artiste renseigné.");
+      return;
+    }
+
+    const entries = [...artistMap.entries()]
+      .map(([artist, files]) => ({ artist, count: files.length }))
+      .sort((a, b) => a.artist.localeCompare(b.artist));
+
+    const confirmed = await showAutoFolderDialog(entries, mp3Files.length, skipped);
+    if (!confirmed) return;
+
+    let moved = 0;
+    const errors: string[] = [];
+    const sep = this.currentPath.includes("/") ? "/" : "\\";
+
+    for (const [artist, files] of artistMap) {
+      const folderName = artist.replace(/[<>:"/\\|?*]/g, "_");
+      const folderPath = this.currentPath + sep + folderName;
+
+      const exists = await this.api.fs.exists(folderPath);
+      if (!exists) {
+        try {
+          await this.api.fs.mkdir(folderPath);
+        } catch (err) {
+          errors.push(`Dossier "${folderName}": ${err}`);
+          continue;
+        }
+      }
+
+      for (const file of files) {
+        try {
+          await this.api.fs.move(file.path, folderPath);
+          moved++;
+        } catch (err) {
+          errors.push(`${file.name}: ${err}`);
+        }
+      }
+    }
+
+    await this.refreshBoth();
+
+    const summary = [`${moved} fichier(s) déplacé(s).`];
+    if (skipped > 0) summary.push(`${skipped} fichier(s) sans artiste ignoré(s).`);
+    if (errors.length > 0) summary.push(`\nErreurs :\n${errors.join("\n")}`);
+    await showAlert(summary.join("\n"));
+  }
+
+  // ── META IA ────────────────────────────────────
+
+  private async metaIA(): Promise<void> {
+    if (!this.currentPath) {
+      await showAlert("Sélectionnez d'abord un dossier.");
+      return;
+    }
+
+    const mp3Files = await this.api.fs.listMp3(this.currentPath);
+    if (mp3Files.length === 0) {
+      await showAlert("Aucun fichier MP3 dans ce dossier.");
+      return;
+    }
+
+    const [meta, genres] = await Promise.all([
+      this.api.audio.getMetadata(mp3Files[0].path),
+      this.api.fs.getAllGenres(this.currentPath),
+    ]);
+
+    const result = await showMetaIADialog({
+      artist: meta.artist ?? "",
+      album: meta.album ?? "",
+      genres,
+      mp3Files,
+    });
+
+    if (!result) return;
+
+    if (result.retrieveGenres) {
+      const [apiKey, promptTemplate] = await Promise.all([
+        this.api.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
+        this.api.store.get<string>(STORE_KEYS.GENRE_PROMPT),
+      ]);
+
+      if (!apiKey) {
+        await showAlert("Clé API OpenAI non configurée.\nAllez dans Paramètres (⚙) pour la renseigner.");
+        return;
+      }
+      if (!promptTemplate) {
+        await showAlert("Prompt non configuré.\nAllez dans Paramètres (⚙) pour renseigner le « Retrieve Genre Prompt ».");
+        return;
+      }
+
+      const prompt = promptTemplate
+        .replace(/\{\{artist_name\}\}/g, meta.artist ?? "")
+        .replace(/\{\{album_name\}\}/g, meta.album ?? "");
+
+      try {
+        const aiResult = await this.api.audio.fetchGenres(prompt, apiKey);
+
+        if (aiResult.genres.length === 0) {
+          await showAlert("L'IA n'a retourné aucun genre.");
+          return;
+        }
+
+        const confirmMsg =
+          `Genres proposés par l'IA :\n${aiResult.genres.join(", ")}\n\n` +
+          `Certitude : ${aiResult.certaintyPercentage} %\n` +
+          `${aiResult.comment}\n\n` +
+          `Les genres existants seront conservés, seuls les nouveaux seront ajoutés.\n` +
+          `Appliquer à ${mp3Files.length} fichier(s) ?`;
+
+        const confirmed = await showConfirm(confirmMsg);
+        if (!confirmed) return;
+
+        const count = await this.api.audio.writeGenres(this.currentPath, aiResult.genres);
+        await showAlert(
+          `Genres ajoutés : ${aiResult.genres.join(", ")}\n\n${count} fichier(s) mis à jour.`,
+        );
+        await this.refresh();
+      } catch (err) {
+        await showAlert(`Erreur META IA : ${err}`);
+      }
     }
   }
 
