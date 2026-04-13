@@ -62,7 +62,16 @@
       </header>
 
       <div class="panels">
-        <div class="panel" id="panel-left"></div>
+        <div class="panel panel--tabbed">
+          <nav class="panel-tabs">
+            <button class="panel-tabs__btn is-active" data-panel-tab="folders">Folders</button>
+            <button class="panel-tabs__btn" data-panel-tab="playlists">Playlists</button>
+          </nav>
+          <div class="panel-tab-page is-active" data-panel-page="folders" id="panel-left"></div>
+          <div class="panel-tab-page" data-panel-page="playlists" id="panel-playlists">
+            <div class="panel-tab-empty">Playlists — à venir</div>
+          </div>
+        </div>
         <div class="panel-divider"></div>
         <div class="panel" id="panel-right"></div>
       </div>

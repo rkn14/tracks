@@ -310,6 +310,65 @@ body {
   outline: none;
 }
 
+.panel--tabbed {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.panel-tabs__btn {
+  padding: 6px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.panel-tabs__btn:hover {
+  color: var(--color-text);
+}
+
+.panel-tabs__btn.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.panel-tab-page {
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.panel-tab-page.is-active {
+  display: flex;
+}
+
+.panel-tab-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--color-text-dim);
+  font-size: 13px;
+  font-style: italic;
+}
+
 .panel-divider {
   background: var(--color-border);
   cursor: col-resize;

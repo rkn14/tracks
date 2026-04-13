@@ -93,6 +93,20 @@ export async function initApp(): Promise<void> {
     if (e.key === "Escape") closeSettings();
   });
 
+  // ── Left panel tabs ─────────────────────────
+  const panelTabBtns = document.querySelectorAll<HTMLButtonElement>(".panel-tabs__btn");
+  const panelTabPages = document.querySelectorAll<HTMLElement>(".panel-tab-page");
+
+  panelTabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      panelTabBtns.forEach((b) => b.classList.remove("is-active"));
+      panelTabPages.forEach((p) => p.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const target = btn.dataset.panelTab!;
+      document.querySelector(`.panel-tab-page[data-panel-page="${target}"]`)?.classList.add("is-active");
+    });
+  });
+
   // ── Restore saved state ──────────────────────
   const leftState = await electronApi.store.get<PanelState>(
     STORE_KEYS.LEFT_PANEL,
