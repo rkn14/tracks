@@ -1,6 +1,6 @@
 import { BrowserWindow, type IpcMain, app, dialog } from "electron";
 import fs from "fs/promises";
-import { IpcChannel } from "@shared/types";
+import { IpcChannel, type EssentiaAnalysis, type ProfileScores } from "@shared/types";
 import {
   listVolumes,
   readDirectory,
@@ -19,6 +19,8 @@ import {
 import { getAudioMetadata } from "./services/audio-metadata";
 import { convertFileToMp3 } from "./services/convert";
 import { writeGenresToMp3s, writeMetadata } from "./services/tag-writer";
+import { writeProfileScores } from "./services/profile-scores";
+import { extractEssentiaFromFile } from "./services/essentia-extractor";
 import { fetchGenresFromAI } from "./services/ai";
 import { storeGet, storeSet } from "./services/store";
 
@@ -116,6 +118,20 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     IpcChannel.AUDIO_WRITE_METADATA,
     (_, filePath: string, meta: import("@shared/types").WritableMetadata) =>
       writeMetadata(filePath, meta),
+  );
+
+  ipcMain.handle(
+    IpcChannel.AUDIO_WRITE_PROFILE_SCORES,
+    (
+      _,
+      filePath: string,
+      scores: ProfileScores,
+      essentia?: EssentiaAnalysis,
+    ) => writeProfileScores(filePath, scores, essentia),
+  );
+
+  ipcMain.handle(IpcChannel.AUDIO_ESSENTIA_EXTRACT, (_, filePath: string) =>
+    extractEssentiaFromFile(filePath),
   );
 
   // ── AI ─────────────────────────────────────

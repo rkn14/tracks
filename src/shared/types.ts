@@ -26,6 +26,8 @@ export const IpcChannel = {
   AUDIO_CONVERT_PROGRESS: "audio:convert-progress",
   AUDIO_WRITE_GENRES: "audio:write-genres",
   AUDIO_WRITE_METADATA: "audio:write-metadata",
+  AUDIO_WRITE_PROFILE_SCORES: "audio:write-profile-scores",
+  AUDIO_ESSENTIA_EXTRACT: "audio:essentia-extract",
 
   DIALOG_SELECT_FOLDER: "dialog:select-folder",
 
@@ -70,6 +72,23 @@ export type AudioExtension = (typeof AUDIO_EXTENSIONS)[number];
 
 // ── Audio metadata ─────────────────────────────
 
+/** Stored in ID3 TXXX `tracks.app/profileScores` as JSON. All values 0–100, default 50. */
+export interface ProfileScores {
+  global: number;
+  energy: number;
+  quantizedGroovy: number;
+  melodicRhythmic: number;
+  darkLight: number;
+  softHard: number;
+}
+
+/** Analyse locale (Essentia), stockée dans le même TXXX que les scores, clé `essentia`. */
+export interface EssentiaAnalysis {
+  bpm?: number;
+  /** Tonalité en anglais, ex. « C major », « A minor ». */
+  key?: string;
+}
+
 export interface AudioMetadata {
   title?: string;
   artist?: string;
@@ -86,6 +105,9 @@ export interface AudioMetadata {
   bitsPerSample?: number;
   channels?: number;
   lossless?: boolean;
+  profileScores?: ProfileScores;
+  /** Données Essentia persistées dans le TXXX custom (pas les tags BPM/key ID3). */
+  essentiaAnalysis?: EssentiaAnalysis;
 }
 
 export interface WritableMetadata {
@@ -169,6 +191,14 @@ export interface ElectronApi {
     ) => () => void;
     writeGenres: (dirPath: string, genres: string[]) => Promise<number>;
     writeMetadata: (filePath: string, meta: WritableMetadata) => Promise<void>;
+    writeProfileScores: (
+      filePath: string,
+      scores: ProfileScores,
+      essentia?: EssentiaAnalysis,
+    ) => Promise<void>;
+    extractEssentia: (
+      filePath: string,
+    ) => Promise<Required<Pick<EssentiaAnalysis, "bpm" | "key">>>;
     fetchGenres: (prompt: string, apiKey: string) => Promise<AIGenreResult>;
   };
 

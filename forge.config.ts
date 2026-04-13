@@ -7,6 +7,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     name: "Tracks",
+    extraResource: ["./resources/essentia"],
   },
   makers: [
     new MakerSquirrel({ name: "tracks" }),

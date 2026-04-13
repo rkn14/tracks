@@ -764,15 +764,171 @@ body {
   gap: 10px;
 }
 
-/* Bottom row: meta (50%) + spectrum (50%) */
+/* Bottom row: meta + Essentia + scores + spectrum */
 
 .player__bottom-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  grid-template-columns: 1fr minmax(120px, 150px) minmax(200px, 260px) 1fr;
+  gap: 10px;
   min-height: 0;
   flex: 1;
   overflow: hidden;
+}
+
+.player__bottom-row--no-scores {
+  grid-template-columns: 1fr 1fr;
+}
+
+.player__bottom-row--no-scores .player__scores,
+.player__bottom-row--no-scores .player__essentia {
+  display: none;
+}
+
+/* Essentia (analyse locale, stockée dans le TXXX custom) */
+
+.player__essentia {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+  min-width: 0;
+}
+
+.player__essentia-head {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.player__essentia-title {
+  color: var(--color-text);
+}
+
+.player__essentia-analyze {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.player__essentia-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.player__essentia-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.player__essentia-row .player__label {
+  font-size: 9px;
+}
+
+.player__essentia-value {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-dim);
+  word-break: break-word;
+}
+
+/* Profile scores (TXXX JSON) */
+
+.player__scores {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.player__score-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.player__score-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.player__score-title {
+  color: var(--color-text);
+}
+
+.player__score-value {
+  flex: none;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-dim);
+}
+
+.player__score-input {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.player__score-input::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+}
+
+.player__score-input::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.player__score-row--global .player__score-input::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, #4a1a2e 0%, #e8a4b8 50%, #ffd6e0 100%);
+}
+
+.player__score-row--energy .player__score-input::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, #f5e000 0%, #ff8800 50%, #e92222 100%);
+}
+
+.player__score-row--quantized .player__score-input::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, #2563eb 0%, #22c55e 100%);
+}
+
+.player__score-row--melodic .player__score-input::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, #3b82f6 0%, #e94560 100%);
+}
+
+.player__score-row--darklight .player__score-input::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, #1e293b 0%, #e2e8f0 100%);
+}
+
+.player__score-row--softhard .player__score-input::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, #f9a8d4 0%, #e94560 100%);
 }
 
 /* Meta */

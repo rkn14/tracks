@@ -9,4 +9,9 @@ export default defineConfig({
       "@renderer": resolve(__dirname, "src/renderer"),
     },
   },
+  build: {
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
+  },
 });

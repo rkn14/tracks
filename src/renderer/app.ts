@@ -3,7 +3,6 @@ import { STORE_KEYS } from "@shared/constants";
 import { FileExplorer } from "./components/file-explorer";
 import { AudioPlayer } from "./components/audio-player";
 import { eventBus } from "./lib/event-bus";
-
 declare global {
   interface Window {
     electronApi: ElectronApi;

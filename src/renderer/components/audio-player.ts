@@ -1,8 +1,14 @@
 import WaveSurfer from "wavesurfer.js";
-import type { AudioMetadata, ElectronApi, WritableMetadata } from "@shared/types";
+import type {
+  AudioMetadata,
+  EssentiaAnalysis,
+  ElectronApi,
+  ProfileScores,
+  WritableMetadata,
+} from "@shared/types";
 import { eventBus } from "../lib/event-bus";
 import { STORE_KEYS } from "@shared/constants";
-
+import { defaultProfileScores, normalizeProfileScores } from "@shared/profile-scores";
 const MIME_BY_EXT: Record<string, string> = {
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
@@ -52,6 +58,14 @@ export class AudioPlayer {
   private sourceNode: MediaElementAudioSourceNode | null = null;
   private vizRafId = 0;
   private vizMode: "spectrum" | "oscilloscope" = "spectrum";
+  private scoresEl!: HTMLElement;
+  private btnEssentiaAnalyze!: HTMLButtonElement;
+  private essentiaBpmEl!: HTMLElement;
+  private essentiaKeyEl!: HTMLElement;
+  private bottomRowEl!: HTMLElement;
+  private profileSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Données Essentia persistées dans le TXXX (hors tags ID3 classiques). */
+  private essentiaAnalysis: EssentiaAnalysis = {};
 
   constructor(container: HTMLElement) {
     this.api = window.electronApi;
@@ -115,6 +129,66 @@ export class AudioPlayer {
               </div>
             </div>
           </div>
+          <div class="player__essentia">
+            <div class="player__essentia-head">
+              <span class="player__essentia-title">Essentia</span>
+            </div>
+            <button type="button" class="player__essentia-analyze dialog-btn dialog-btn--primary">Analyze</button>
+            <div class="player__essentia-rows">
+              <div class="player__essentia-row">
+                <span class="player__label">BPM</span>
+                <span class="player__essentia-value" data-essentia-bpm>\u2014</span>
+              </div>
+              <div class="player__essentia-row">
+                <span class="player__label">Key</span>
+                <span class="player__essentia-value" data-essentia-key>\u2014</span>
+              </div>
+            </div>
+          </div>
+          <div class="player__scores">
+            <div class="player__score-row player__score-row--global" data-score="global">
+              <div class="player__score-head">
+                <span class="player__score-title">Global</span>
+                <span class="player__score-value">50</span>
+              </div>
+              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+            <div class="player__score-row player__score-row--energy" data-score="energy">
+              <div class="player__score-head">
+                <span>Energy</span>
+                <span class="player__score-value">50</span>
+              </div>
+              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+            <div class="player__score-row player__score-row--quantized" data-score="quantizedGroovy">
+              <div class="player__score-head">
+                <span>Groovy</span>
+                <span class="player__score-value">50</span>
+              </div>
+              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+            <div class="player__score-row player__score-row--melodic" data-score="melodicRhythmic">
+              <div class="player__score-head">
+                <span>Melodic</span>
+                <span class="player__score-value">50</span>
+              </div>
+              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+            <div class="player__score-row player__score-row--darklight" data-score="darkLight">
+              <div class="player__score-head">
+                <span>Dark</span>
+                <span class="player__score-value">50</span>
+              </div>
+              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+            <div class="player__score-row player__score-row--softhard" data-score="softHard">
+              <div class="player__score-head">
+                <span>Hard</span>
+                <span class="player__score-value">50</span>
+              </div>
+              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+          </div>
           <canvas class="player__spectrum" width="0" height="0"></canvas>
         </div>
       </div>
@@ -140,7 +214,138 @@ export class AudioPlayer {
     this.spectrumCanvas.style.cursor = "pointer";
     this.spectrumCanvas.addEventListener("click", () => this.toggleVizMode());
 
+    this.scoresEl = this.el.querySelector(".player__scores")!;
+    this.btnEssentiaAnalyze = this.el.querySelector(".player__essentia-analyze")!;
+    this.essentiaBpmEl = this.el.querySelector("[data-essentia-bpm]")!;
+    this.essentiaKeyEl = this.el.querySelector("[data-essentia-key]")!;
+    this.bottomRowEl = this.el.querySelector(".player__bottom-row")!;
+    this.initScoreSliders();
+    this.btnEssentiaAnalyze.addEventListener("click", () => void this.runEssentiaAnalyze());
+
     this.initEditableFields();
+  }
+
+  private initScoreSliders(): void {
+    const inputs = this.scoresEl.querySelectorAll<HTMLInputElement>(".player__score-input");
+    for (const input of inputs) {
+      input.addEventListener("input", () => {
+        this.syncScoreValueLabel(input);
+        this.scheduleProfileSave();
+      });
+    }
+  }
+
+  private syncScoreValueLabel(input: HTMLInputElement): void {
+    const row = input.closest("[data-score]");
+    const valueEl = row?.querySelector(".player__score-value");
+    if (valueEl) valueEl.textContent = input.value;
+  }
+
+  private applyEssentiaToUi(): void {
+    this.essentiaBpmEl.textContent =
+      this.essentiaAnalysis.bpm !== undefined
+        ? String(this.essentiaAnalysis.bpm)
+        : "\u2014";
+    this.essentiaKeyEl.textContent =
+      this.essentiaAnalysis.key !== undefined
+        ? this.essentiaAnalysis.key
+        : "\u2014";
+  }
+
+  /** Données Essentia à réécrire dans le TXXX avec les scores (évite d’effacer l’analyse). */
+  private essentiaSnapshotForWrite(): EssentiaAnalysis | undefined {
+    const out: EssentiaAnalysis = {};
+    if (this.essentiaAnalysis.bpm !== undefined) out.bpm = this.essentiaAnalysis.bpm;
+    if (this.essentiaAnalysis.key !== undefined) out.key = this.essentiaAnalysis.key;
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+
+  private async runEssentiaAnalyze(): Promise<void> {
+    const path = this.currentFilePath;
+    if (!path?.toLowerCase().endsWith(".mp3")) return;
+    this.btnEssentiaAnalyze.disabled = true;
+    const prevLabel = this.btnEssentiaAnalyze.textContent;
+    this.btnEssentiaAnalyze.textContent = "...";
+    this.essentiaBpmEl.textContent = "\u2026";
+    this.essentiaKeyEl.textContent = "\u2026";
+    try {
+      const { bpm, key } = await this.api.audio.extractEssentia(path);
+      this.essentiaAnalysis = { bpm, key };
+      this.applyEssentiaToUi();
+      await this.api.audio.writeProfileScores(
+        path,
+        this.readProfileScoresFromUi(),
+        this.essentiaSnapshotForWrite(),
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "Erreur d\u2019analyse";
+      this.essentiaBpmEl.textContent = "\u2014";
+      this.essentiaKeyEl.textContent =
+        msg.length > 56 ? `${msg.slice(0, 53)}\u2026` : msg;
+      console.error("Analyse Essentia", err);
+    } finally {
+      this.btnEssentiaAnalyze.disabled = false;
+      this.btnEssentiaAnalyze.textContent = prevLabel ?? "Analyze";
+    }
+  }
+
+  private isCurrentFileMp3(): boolean {
+    return !!this.currentFilePath?.toLowerCase().endsWith(".mp3");
+  }
+
+  private setProfileUiVisible(visible: boolean): void {
+    this.bottomRowEl.classList.toggle("player__bottom-row--no-scores", !visible);
+  }
+
+  private applyProfileScoresToUi(scores: ProfileScores): void {
+    const keys: (keyof ProfileScores)[] = [
+      "global", "energy", "quantizedGroovy", "melodicRhythmic", "darkLight", "softHard",
+    ];
+    for (const key of keys) {
+      const row = this.scoresEl.querySelector(`[data-score="${key}"]`);
+      const input = row?.querySelector<HTMLInputElement>(".player__score-input");
+      if (input) {
+        input.value = String(scores[key]);
+        this.syncScoreValueLabel(input);
+      }
+    }
+  }
+
+  private readProfileScoresFromUi(): ProfileScores {
+    const keys: (keyof ProfileScores)[] = [
+      "global", "energy", "quantizedGroovy", "melodicRhythmic", "darkLight", "softHard",
+    ];
+    const raw: Partial<ProfileScores> = {};
+    for (const key of keys) {
+      const row = this.scoresEl.querySelector(`[data-score="${key}"]`);
+      const input = row?.querySelector<HTMLInputElement>(".player__score-input");
+      raw[key] = input ? parseInt(input.value, 10) : 50;
+    }
+    return normalizeProfileScores(raw);
+  }
+
+  private scheduleProfileSave(): void {
+    if (!this.isCurrentFileMp3() || !this.currentFilePath) return;
+    if (this.profileSaveTimer) clearTimeout(this.profileSaveTimer);
+    this.profileSaveTimer = setTimeout(async () => {
+      this.profileSaveTimer = null;
+      const path = this.currentFilePath;
+      if (!path?.toLowerCase().endsWith(".mp3")) return;
+      try {
+        await this.api.audio.writeProfileScores(
+          path,
+          this.readProfileScoresFromUi(),
+          this.essentiaSnapshotForWrite(),
+        );
+      } catch (err) {
+        console.error("Échec de l’écriture des notes profil", err);
+      }
+    }, 350);
   }
 
   private static readonly EDITABLE_FIELDS = new Set([
@@ -225,7 +430,30 @@ export class AudioPlayer {
   }
 
   async load(filePath: string): Promise<void> {
+    const previousPath = this.currentFilePath;
+    const hadPendingProfileSave = this.profileSaveTimer !== null;
+    if (this.profileSaveTimer) {
+      clearTimeout(this.profileSaveTimer);
+      this.profileSaveTimer = null;
+    }
+    if (
+      hadPendingProfileSave &&
+      previousPath?.toLowerCase().endsWith(".mp3")
+    ) {
+      try {
+        await this.api.audio.writeProfileScores(
+          previousPath,
+          this.readProfileScoresFromUi(),
+          this.essentiaSnapshotForWrite(),
+        );
+      } catch (err) {
+        console.error("Échec de l’écriture des notes profil (flush)", err);
+      }
+    }
+
     this.currentFilePath = filePath;
+    this.essentiaAnalysis = {};
+    this.applyEssentiaToUi();
 
     // Clean up previous blob URL
     if (this.blobUrl) {
@@ -315,6 +543,19 @@ export class AudioPlayer {
         this.coverImg.src = "";
         this.coverImg.style.display = "none";
       }
+
+      const mp3 = filePath.toLowerCase().endsWith(".mp3");
+      this.setProfileUiVisible(mp3);
+      this.applyProfileScoresToUi(
+        mp3 ? normalizeProfileScores(meta.profileScores) : defaultProfileScores(),
+      );
+      if (mp3) {
+        this.essentiaAnalysis = { ...meta.essentiaAnalysis };
+        this.applyEssentiaToUi();
+      } else {
+        this.essentiaAnalysis = {};
+        this.applyEssentiaToUi();
+      }
     } catch {
       this.titleEl.textContent = fileName;
       this.artistEl.textContent = "";
@@ -326,6 +567,10 @@ export class AudioPlayer {
       this.bpmEl.textContent = "";
       this.qualityEl.textContent = "";
       this.coverImg.style.display = "none";
+      this.setProfileUiVisible(filePath.toLowerCase().endsWith(".mp3"));
+      this.applyProfileScoresToUi(defaultProfileScores());
+      this.essentiaAnalysis = {};
+      this.applyEssentiaToUi();
     }
   }
 

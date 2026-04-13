@@ -9,6 +9,9 @@ export const DEFAULT_WINDOW_CONFIG = {
 
 export const PLAYER_HEIGHT = 340;
 
+/** ID3 TXXX description for JSON profile scores (0–100), default 50 per axis. */
+export const TRACKS_PROFILE_TXXX_DESCRIPTION = "tracks.app/profileScores";
+
 export const STORE_KEYS = {
   LEFT_PANEL: "leftPanel",
   RIGHT_PANEL: "rightPanel",
