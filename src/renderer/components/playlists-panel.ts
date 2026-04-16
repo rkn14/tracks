@@ -20,6 +20,9 @@ interface PlaylistTreeUiState {
 const TRACK_TO_PLAYLIST_DRAG_MIME =
   "application/x-tracks-dj-playlist-track";
 
+/** Fichiers depuis l’explorateur Library (même format que `file-explorer`). */
+const LIBRARY_FILES_DRAG_MIME = "application/x-tracks-files";
+
 interface TrackDragPayload {
   trackId: number;
   sourceListId: number;
@@ -38,6 +41,8 @@ export class PlaylistsPanel {
   private viewedPlaylistId: number | null = null;
   /** Pendant un drag depuis la liste de pistes (`getData` est vide en `dragover`). */
   private activeTrackDrag: TrackDragPayload | null = null;
+  /** Chemins absolus pendant un drag depuis l’explorateur (`getData` souvent vide en `dragover`). */
+  private libraryDragPaths: string[] | null = null;
 
   constructor(container: HTMLElement) {
     container.replaceChildren();
@@ -63,6 +68,13 @@ export class PlaylistsPanel {
     this.leftPane = this.root.querySelector(".dj-playlists__pane--tree")!;
     this.treeEl = this.root.querySelector(".dj-pl-tree")!;
     this.tracksEl = this.root.querySelector(".dj-pl-tracks")!;
+
+    eventBus.on("library-files-drag-start", (data) => {
+      this.libraryDragPaths = data.paths;
+    });
+    eventBus.on("library-files-drag-end", () => {
+      this.libraryDragPaths = null;
+    });
 
     this.root.tabIndex = -1;
     this.root.addEventListener("keydown", (e) => {
@@ -366,9 +378,36 @@ export class PlaylistsPanel {
     }
   }
 
+  private isLibraryFilesDrag(e: DragEvent): boolean {
+    return (
+      (this.libraryDragPaths != null && this.libraryDragPaths.length > 0) ||
+      Boolean(e.dataTransfer?.types.includes(LIBRARY_FILES_DRAG_MIME))
+    );
+  }
+
+  private parseLibraryFilePathsFromDrop(e: DragEvent): string[] {
+    const raw = e.dataTransfer?.getData(LIBRARY_FILES_DRAG_MIME);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw) as unknown;
+        if (Array.isArray(arr)) {
+          return arr.filter((x): x is string => typeof x === "string");
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return this.libraryDragPaths ? [...this.libraryDragPaths] : [];
+  }
+
   private initTrackToPlaylistDnD(): void {
     this.treeEl.addEventListener("dragover", (e) => {
-      if (!e.dataTransfer?.types.includes(TRACK_TO_PLAYLIST_DRAG_MIME)) return;
+      const dt = e.dataTransfer;
+      if (!dt) return;
+
+      const fromPlaylistTrack = dt.types.includes(TRACK_TO_PLAYLIST_DRAG_MIME);
+      const fromLibrary = this.isLibraryFilesDrag(e);
+      if (!fromPlaylistTrack && !fromLibrary) return;
 
       const leaf = (e.target as HTMLElement).closest<HTMLElement>(
         ".fe-tree-item[data-list-id]",
@@ -376,36 +415,50 @@ export class PlaylistsPanel {
       this.clearTrackDropHighlight();
       this.clearReorderDropIndicator();
 
-      const payload = this.activeTrackDrag;
-
       if (!leaf?.dataset.listId) {
-        e.dataTransfer.dropEffect = "none";
+        dt.dropEffect = "none";
         return;
       }
 
       const destListId = Number(leaf.dataset.listId);
       if (!Number.isFinite(destListId)) {
-        e.dataTransfer.dropEffect = "none";
+        dt.dropEffect = "none";
         return;
       }
 
+      if (fromLibrary) {
+        leaf.classList.add("fe-drop-target");
+        e.preventDefault();
+        dt.dropEffect = "copy";
+        return;
+      }
+
+      const payload = this.activeTrackDrag;
       if (!payload) {
-        e.dataTransfer.dropEffect = "none";
+        dt.dropEffect = "none";
         return;
       }
 
       if (destListId === payload.sourceListId) {
-        e.dataTransfer.dropEffect = "none";
+        dt.dropEffect = "none";
         return;
       }
 
       leaf.classList.add("fe-drop-target");
       e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
+      dt.dropEffect = "copy";
     });
 
     this.treeEl.addEventListener("dragleave", (e) => {
-      if (!e.dataTransfer?.types.includes(TRACK_TO_PLAYLIST_DRAG_MIME)) return;
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      if (
+        !dt.types.includes(TRACK_TO_PLAYLIST_DRAG_MIME) &&
+        !dt.types.includes(LIBRARY_FILES_DRAG_MIME) &&
+        !this.libraryDragPaths
+      ) {
+        return;
+      }
       const related = e.relatedTarget as Node | null;
       if (related && this.treeEl.contains(related)) return;
       this.clearTrackDropHighlight();
@@ -413,7 +466,31 @@ export class PlaylistsPanel {
     });
 
     this.treeEl.addEventListener("drop", (e) => {
-      if (!e.dataTransfer?.types.includes(TRACK_TO_PLAYLIST_DRAG_MIME)) return;
+      const dt = e.dataTransfer;
+      if (!dt) return;
+
+      const leaf = (e.target as HTMLElement).closest<HTMLElement>(
+        ".fe-tree-item[data-list-id]",
+      );
+      if (!leaf?.dataset.listId) return;
+
+      const destListId = Number(leaf.dataset.listId);
+      if (!Number.isFinite(destListId)) return;
+
+      if (dt.types.includes(LIBRARY_FILES_DRAG_MIME) || this.libraryDragPaths) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.clearTrackDropHighlight();
+        this.clearReorderDropIndicator();
+
+        const paths = this.parseLibraryFilePathsFromDrop(e);
+        if (paths.length === 0) return;
+
+        void this.applyLibraryFilesDropToPlaylist(destListId, paths);
+        return;
+      }
+
+      if (!dt.types.includes(TRACK_TO_PLAYLIST_DRAG_MIME)) return;
       e.preventDefault();
       e.stopPropagation();
       this.clearTrackDropHighlight();
@@ -424,17 +501,42 @@ export class PlaylistsPanel {
         this.parseTrackDragPayload(raw) ?? this.activeTrackDrag;
       if (!payload) return;
 
-      const leaf = (e.target as HTMLElement).closest<HTMLElement>(
-        ".fe-tree-item[data-list-id]",
-      );
-      if (!leaf?.dataset.listId) return;
-
-      const destListId = Number(leaf.dataset.listId);
-      if (!Number.isFinite(destListId)) return;
       if (destListId === payload.sourceListId) return;
 
       void this.applyTrackDropToPlaylist(payload.trackId, destListId);
     });
+  }
+
+  private async applyLibraryFilesDropToPlaylist(
+    destListId: number,
+    filePaths: string[],
+  ): Promise<void> {
+    const result = await this.api.engineDj.addLibraryFilesToPlaylist({
+      destListId,
+      filePaths,
+    });
+    if (!result.ok) {
+      await showAlert(result.error ?? "Impossible d’ajouter les fichiers.");
+      return;
+    }
+
+    const { added, failures } = result;
+    if (failures.length > 0) {
+      const lines = failures.map((f) => `${f.path}: ${f.error}`).join("\n");
+      if (added > 0) {
+        await showAlert(
+          `${added} piste(s) ajoutée(s).\n\nÉchecs :\n${lines}`,
+        );
+      } else {
+        await showAlert(`Aucune piste ajoutée.\n\n${lines}`);
+      }
+    }
+
+    try {
+      await this.refreshViewedPlaylistTracksIfShowing(destListId);
+    } catch (err) {
+      await showAlert(err instanceof Error ? err.message : String(err));
+    }
   }
 
   private async applyTrackDropToPlaylist(

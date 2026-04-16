@@ -3,6 +3,7 @@ import fs from "fs/promises";
 import {
   IpcChannel,
   type DjAddChildPlaylistParams,
+  type DjAddLibraryFilesToPlaylistParams,
   type DjAddTrackToPlaylistParams,
   type DjRemoveTrackFromPlaylistParams,
   type DjReorderPlaylistTracksParams,
@@ -33,6 +34,7 @@ import { fetchGenresFromAI } from "./services/ai";
 import { storeGet, storeSet } from "./services/store";
 import {
   djDbAddChildPlaylist,
+  djDbAddLibraryFilesToPlaylist,
   djDbAddTrackToPlaylist,
   djDbConnectFromStore,
   djDbGetPlaylistTracks,
@@ -209,5 +211,11 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     IpcChannel.ENGINE_DJ_DB_REORDER_PLAYLIST_TRACKS,
     (_, params: DjReorderPlaylistTracksParams) =>
       djDbReorderPlaylistTracks(params.listId, params.entityIds),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_ADD_LIBRARY_FILES_TO_PLAYLIST,
+    (_, params: DjAddLibraryFilesToPlaylistParams) =>
+      djDbAddLibraryFilesToPlaylist(params.destListId, params.filePaths),
   );
 }

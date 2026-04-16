@@ -1,8 +1,10 @@
+import { statSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import Database from "better-sqlite3";
 import { STORE_KEYS } from "@shared/constants";
 import type {
+  DjAddLibraryFilesToPlaylistResult,
   DjAddPlaylistResult,
   DjAddTrackToPlaylistResult,
   DjDbConnectResult,
@@ -548,5 +550,134 @@ export function djDbReorderPlaylistTracks(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: msg };
+  }
+}
+
+function pathsEqualCaseAware(a: string, b: string): boolean {
+  const na = path.normalize(a);
+  const nb = path.normalize(b);
+  if (process.platform === "win32") {
+    return na.toLowerCase() === nb.toLowerCase();
+  }
+  return na === nb;
+}
+
+/**
+ * Trouve `Track.id` pour un fichier absolu sous le dossier Library (paramètre),
+ * en comparant avec `path.join(libraryRoot, Track.path, Track.filename)`.
+ */
+function findTrackIdForLibraryFile(
+  d: SqliteDatabase,
+  libraryRoot: string,
+  absolutePath: string,
+): number | null {
+  const root = path.resolve(libraryRoot.trim());
+  const abs = path.resolve(absolutePath);
+  const rel = path.relative(root, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return null;
+  }
+
+  const absNorm = path.normalize(abs);
+  const filename = path.basename(absNorm);
+  const rows = d
+    .prepare(
+      `SELECT id, path, filename FROM Track WHERE LOWER(filename) = LOWER(?)`,
+    )
+    .all(filename) as { id: number; path: string | null; filename: string | null }[];
+
+  for (const row of rows) {
+    const p = (row.path ?? "").trim();
+    const f = (row.filename ?? "").trim();
+    const candidate = path.normalize(path.join(root, p, f));
+    if (pathsEqualCaseAware(candidate, absNorm)) {
+      return row.id;
+    }
+    const relDb = path.join(p, f);
+    if (pathsEqualCaseAware(path.normalize(rel), path.normalize(relDb))) {
+      return row.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Ajoute des fichiers Library (chemins disque) à une playlist après résolution
+ * des `Track.id` dans la base Engine DJ.
+ */
+export async function djDbAddLibraryFilesToPlaylist(
+  destListId: number,
+  filePaths: string[],
+): Promise<DjAddLibraryFilesToPlaylistResult> {
+  const failures: { path: string; error: string }[] = [];
+  if (filePaths.length === 0) {
+    return { ok: false, added: 0, failures: [], error: "Aucun fichier." };
+  }
+
+  const libraryRoot = (await storeGet<string>(STORE_KEYS.LIBRARY_FOLDER))?.trim() ?? "";
+  if (!libraryRoot) {
+    return {
+      ok: false,
+      added: 0,
+      failures: [],
+      error: "Dossier Library non configuré (Paramètres).",
+    };
+  }
+
+  try {
+    const d = requireDb();
+
+    const listOk = d
+      .prepare("SELECT id FROM Playlist WHERE id = ?")
+      .get(destListId) as { id: number } | undefined;
+    if (!listOk) {
+      return {
+        ok: false,
+        added: 0,
+        failures: [],
+        error: "Playlist introuvable.",
+      };
+    }
+
+    let added = 0;
+
+    for (const fp of filePaths) {
+      let st: ReturnType<typeof statSync>;
+      try {
+        st = statSync(fp);
+      } catch {
+        failures.push({ path: fp, error: "Fichier introuvable." });
+        continue;
+      }
+      if (!st.isFile()) {
+        failures.push({ path: fp, error: "Ce n'est pas un fichier." });
+        continue;
+      }
+
+      const trackId = findTrackIdForLibraryFile(d, libraryRoot, fp);
+      if (trackId == null) {
+        failures.push({
+          path: fp,
+          error:
+            "Piste introuvable dans la base Engine DJ (import ou chemin).",
+        });
+        continue;
+      }
+
+      const r = djDbAddTrackToPlaylist(destListId, trackId);
+      if (!r.ok) {
+        failures.push({
+          path: fp,
+          error: r.error ?? "Impossible d’ajouter la piste.",
+        });
+        continue;
+      }
+      added += 1;
+    }
+
+    return { ok: true, added, failures };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, added: 0, failures: [], error: msg };
   }
 }

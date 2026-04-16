@@ -2,6 +2,9 @@ export type EventMap = {
   "play-file": { filePath: string };
   "refresh-panel": { panelId: "left" | "right" };
   "clipboard-changed": Record<string, never>;
+  /** Drag depuis l’explorateur (fichiers / dossier arbre) : chemins absolus. */
+  "library-files-drag-start": { paths: string[] };
+  "library-files-drag-end": Record<string, never>;
 };
 
 type Handler<T> = (data: T) => void;

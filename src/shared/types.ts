@@ -45,6 +45,8 @@ export const IpcChannel = {
     "engine-dj-db:remove-track-from-playlist",
   ENGINE_DJ_DB_REORDER_PLAYLIST_TRACKS:
     "engine-dj-db:reorder-playlist-tracks",
+  ENGINE_DJ_DB_ADD_LIBRARY_FILES_TO_PLAYLIST:
+    "engine-dj-db:add-library-files-to-playlist",
 } as const;
 
 export type IpcChannelValue =
@@ -222,6 +224,19 @@ export interface DjPlaylistTrackMutationResult {
   error?: string;
 }
 
+export interface DjAddLibraryFilesToPlaylistParams {
+  destListId: number;
+  filePaths: string[];
+}
+
+/** Résultat d’un lot : `ok` faux seulement en cas d’erreur globale (ex. Library non configurée). */
+export interface DjAddLibraryFilesToPlaylistResult {
+  ok: boolean;
+  added: number;
+  failures: { path: string; error: string }[];
+  error?: string;
+}
+
 export interface AppState {
   leftPanel: PanelState;
   rightPanel: PanelState;
@@ -300,5 +315,8 @@ export interface ElectronApi {
     reorderPlaylistTracks: (
       params: DjReorderPlaylistTracksParams,
     ) => Promise<DjPlaylistTrackMutationResult>;
+    addLibraryFilesToPlaylist: (
+      params: DjAddLibraryFilesToPlaylistParams,
+    ) => Promise<DjAddLibraryFilesToPlaylistResult>;
   };
 }

@@ -675,9 +675,11 @@ export class FileExplorer {
     row.draggable = true;
     row.addEventListener("dragstart", (e) => {
       e.stopPropagation();
-      e.dataTransfer!.setData("application/x-tracks-files", JSON.stringify([node.path]));
+      const paths = [node.path];
+      e.dataTransfer!.setData("application/x-tracks-files", JSON.stringify(paths));
       e.dataTransfer!.setData("text/x-source-panel", this.panelId);
       e.dataTransfer!.effectAllowed = "copy";
+      eventBus.emit("library-files-drag-start", { paths });
 
       const ghost = document.createElement("div");
       ghost.className = "fe-drag-ghost";
@@ -685,6 +687,9 @@ export class FileExplorer {
       document.body.appendChild(ghost);
       e.dataTransfer!.setDragImage(ghost, 0, 0);
       requestAnimationFrame(() => ghost.remove());
+    });
+    row.addEventListener("dragend", () => {
+      eventBus.emit("library-files-drag-end", {});
     });
 
     row.addEventListener("dragover", (e) => {
@@ -817,6 +822,7 @@ export class FileExplorer {
       e.dataTransfer!.setData("application/x-tracks-files", JSON.stringify(paths));
       e.dataTransfer!.setData("text/x-source-panel", this.panelId);
       e.dataTransfer!.effectAllowed = "copy";
+      eventBus.emit("library-files-drag-start", { paths });
 
       const ghost = document.createElement("div");
       ghost.className = "fe-drag-ghost";
@@ -824,6 +830,9 @@ export class FileExplorer {
       document.body.appendChild(ghost);
       e.dataTransfer!.setDragImage(ghost, 0, 0);
       requestAnimationFrame(() => ghost.remove());
+    });
+    row.addEventListener("dragend", () => {
+      eventBus.emit("library-files-drag-end", {});
     });
 
     return row;

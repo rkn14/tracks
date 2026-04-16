@@ -99,6 +99,11 @@ const electronApi: ElectronApi = {
         IpcChannel.ENGINE_DJ_DB_REORDER_PLAYLIST_TRACKS,
         params,
       ),
+    addLibraryFilesToPlaylist: (params) =>
+      ipcRenderer.invoke(
+        IpcChannel.ENGINE_DJ_DB_ADD_LIBRARY_FILES_TO_PLAYLIST,
+        params,
+      ),
   },
 };
 
