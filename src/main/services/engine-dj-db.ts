@@ -562,9 +562,71 @@ function pathsEqualCaseAware(a: string, b: string): boolean {
   return na === nb;
 }
 
+/** La colonne `Track.path` contient-elle déjà le nom de fichier (script Python : path + file dans une seule chaîne) ? */
+function pathColumnIncludesFilename(pTrim: string, fTrim: string): boolean {
+  if (!pTrim || !fTrim) return false;
+  const base = path.basename(pTrim.replace(/\\/g, "/"));
+  return pathsEqualCaseAware(base, fTrim);
+}
+
 /**
- * Trouve `Track.id` pour un fichier absolu sous le dossier Library (paramètre),
- * en comparant avec `path.join(libraryRoot, Track.path, Track.filename)`.
+ * Reconstruit le chemin absolu disque à partir de `Track.path` + `Track.filename`
+ * (évite de concaténer deux fois le nom si `path` est déjà complet, cf. `doc/Add New Tracks.py`).
+ */
+function resolveTrackAbsoluteFromRow(
+  root: string,
+  p: string | null,
+  f: string | null,
+): string | null {
+  const pTrim = (p ?? "").trim();
+  const fTrim = (f ?? "").trim();
+  if (!pTrim && !fTrim) return null;
+  if (!pTrim && fTrim) return path.normalize(path.resolve(root, fTrim));
+  if (!fTrim) return path.normalize(path.resolve(root, pTrim));
+  if (pathColumnIncludesFilename(pTrim, fTrim)) {
+    return path.normalize(path.resolve(root, pTrim));
+  }
+  return path.normalize(path.resolve(root, pTrim, fTrim));
+}
+
+function pathVariantsForDb(s: string): string[] {
+  const t = s.trim();
+  if (!t) return [""];
+  const out = new Set<string>();
+  out.add(t);
+  out.add(t.replace(/\\/g, "/"));
+  out.add(t.replace(/\//g, "\\"));
+  return [...out];
+}
+
+/**
+ * Couples (path, filename) possibles en base (Engine DJ / script Python `../MIX/...`).
+ */
+function candidatePathFilenamePairs(relFwd: string, filename: string): Array<{ path: string; filename: string }> {
+  const pairs: Array<{ path: string; filename: string }> = [];
+  const seen = new Set<string>();
+  const add = (p: string, fn: string) => {
+    const k = `${p}\0${fn}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    pairs.push({ path: p, filename: fn });
+  };
+
+  add(relFwd, filename);
+
+  const dirOnly = path.posix.dirname(relFwd);
+  if (dirOnly && dirOnly !== "." && dirOnly !== "") {
+    add(dirOnly, filename);
+  }
+
+  add(`../MIX/${relFwd}`, filename);
+
+  return pairs;
+}
+
+/**
+ * Trouve `Track.id` pour un fichier absolu sous le dossier Library (paramètre).
+ * Gère `Track.path` = dossier seul ou chemin relatif complet (dont nom de fichier), comme en base Rekordbox / script Python.
  */
 function findTrackIdForLibraryFile(
   d: SqliteDatabase,
@@ -580,6 +642,22 @@ function findTrackIdForLibraryFile(
 
   const absNorm = path.normalize(abs);
   const filename = path.basename(absNorm);
+  const relFwd = rel.replace(/\\/g, "/");
+
+  const stmtExact = d.prepare(
+    `SELECT id FROM Track WHERE path = ? AND LOWER(filename) = LOWER(?) LIMIT 1`,
+  );
+
+  for (const { path: pCol, filename: fnCol } of candidatePathFilenamePairs(
+    relFwd,
+    filename,
+  )) {
+    for (const pv of pathVariantsForDb(pCol)) {
+      const row = stmtExact.get(pv, fnCol) as { id: number } | undefined;
+      if (row) return row.id;
+    }
+  }
+
   const rows = d
     .prepare(
       `SELECT id, path, filename FROM Track WHERE LOWER(filename) = LOWER(?)`,
@@ -587,14 +665,8 @@ function findTrackIdForLibraryFile(
     .all(filename) as { id: number; path: string | null; filename: string | null }[];
 
   for (const row of rows) {
-    const p = (row.path ?? "").trim();
-    const f = (row.filename ?? "").trim();
-    const candidate = path.normalize(path.join(root, p, f));
-    if (pathsEqualCaseAware(candidate, absNorm)) {
-      return row.id;
-    }
-    const relDb = path.join(p, f);
-    if (pathsEqualCaseAware(path.normalize(rel), path.normalize(relDb))) {
+    const resolved = resolveTrackAbsoluteFromRow(root, row.path, row.filename);
+    if (resolved && pathsEqualCaseAware(resolved, absNorm)) {
       return row.id;
     }
   }

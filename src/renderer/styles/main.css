@@ -423,6 +423,14 @@ body {
   min-height: 0;
 }
 
+/* Dépot de fichiers Library sur la liste de pistes (playlist ouverte) */
+.dj-pl-tracks.dj-pl-tracks--library-drop-target {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+
 /* Arborescence playlists : mêmes blocs que l’explorateur (fe-tree-item, flèches) */
 .dj-pl-folder > summary {
   list-style: none;

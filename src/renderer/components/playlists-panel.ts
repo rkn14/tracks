@@ -93,6 +93,7 @@ export class PlaylistsPanel {
     this.initDividerResize();
     this.initTrackToPlaylistDnD();
     this.initPlaylistTrackReorderDnD();
+    this.initLibraryFilesDropOnTracksPane();
 
     this.root.addEventListener("mousedown", (e) => {
       if (!this.root.contains(e.target as Node)) return;
@@ -146,6 +147,10 @@ export class PlaylistsPanel {
       .forEach((el) => {
         el.classList.remove("dj-pl-track-drop-before", "dj-pl-track-drop-after");
       });
+  }
+
+  private clearTracksPaneLibraryDropHighlight(): void {
+    this.tracksEl.classList.remove("dj-pl-tracks--library-drop-target");
   }
 
   private parseTrackDragPayload(raw: string): TrackDragPayload | null {
@@ -244,6 +249,7 @@ export class PlaylistsPanel {
         return;
       }
 
+      this.clearTracksPaneLibraryDropHighlight();
       this.clearReorderDropIndicator();
       this.clearTrackDropHighlight();
 
@@ -400,6 +406,50 @@ export class PlaylistsPanel {
     return this.libraryDragPaths ? [...this.libraryDragPaths] : [];
   }
 
+  /** Déposer des fichiers Library sur la liste de pistes de la playlist affichée. */
+  private initLibraryFilesDropOnTracksPane(): void {
+    this.tracksEl.addEventListener("dragover", (e) => {
+      if (!this.isLibraryFilesDrag(e)) return;
+      const dt = e.dataTransfer;
+      if (!dt) return;
+
+      this.clearReorderDropIndicator();
+      this.clearTrackDropHighlight();
+
+      if (this.viewedPlaylistId == null) {
+        dt.dropEffect = "none";
+        return;
+      }
+
+      e.preventDefault();
+      dt.dropEffect = "copy";
+      this.tracksEl.classList.add("dj-pl-tracks--library-drop-target");
+    });
+
+    this.tracksEl.addEventListener("dragleave", (e) => {
+      if (!this.isLibraryFilesDrag(e)) return;
+      const related = e.relatedTarget as Node | null;
+      if (related && this.tracksEl.contains(related)) return;
+      this.clearTracksPaneLibraryDropHighlight();
+    });
+
+    this.tracksEl.addEventListener("drop", (e) => {
+      if (!this.isLibraryFilesDrag(e)) return;
+      if (this.viewedPlaylistId == null) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      this.clearTracksPaneLibraryDropHighlight();
+      this.clearReorderDropIndicator();
+      this.clearTrackDropHighlight();
+
+      const paths = this.parseLibraryFilePathsFromDrop(e);
+      if (paths.length === 0) return;
+
+      void this.applyLibraryFilesDropToPlaylist(this.viewedPlaylistId, paths);
+    });
+  }
+
   private initTrackToPlaylistDnD(): void {
     this.treeEl.addEventListener("dragover", (e) => {
       const dt = e.dataTransfer;
@@ -412,6 +462,7 @@ export class PlaylistsPanel {
       const leaf = (e.target as HTMLElement).closest<HTMLElement>(
         ".fe-tree-item[data-list-id]",
       );
+      this.clearTracksPaneLibraryDropHighlight();
       this.clearTrackDropHighlight();
       this.clearReorderDropIndicator();
 
@@ -463,6 +514,7 @@ export class PlaylistsPanel {
       if (related && this.treeEl.contains(related)) return;
       this.clearTrackDropHighlight();
       this.clearReorderDropIndicator();
+      this.clearTracksPaneLibraryDropHighlight();
     });
 
     this.treeEl.addEventListener("drop", (e) => {
@@ -482,6 +534,7 @@ export class PlaylistsPanel {
         e.stopPropagation();
         this.clearTrackDropHighlight();
         this.clearReorderDropIndicator();
+        this.clearTracksPaneLibraryDropHighlight();
 
         const paths = this.parseLibraryFilePathsFromDrop(e);
         if (paths.length === 0) return;
@@ -495,6 +548,7 @@ export class PlaylistsPanel {
       e.stopPropagation();
       this.clearTrackDropHighlight();
       this.clearReorderDropIndicator();
+      this.clearTracksPaneLibraryDropHighlight();
 
       const raw = e.dataTransfer.getData(TRACK_TO_PLAYLIST_DRAG_MIME);
       const payload =
@@ -704,6 +758,7 @@ export class PlaylistsPanel {
 
   async reconnect(): Promise<void> {
     this.viewedPlaylistId = null;
+    this.clearTracksPaneLibraryDropHighlight();
     this.clearSelectionHighlight();
     this.banner.hidden = true;
     this.banner.textContent = "";
