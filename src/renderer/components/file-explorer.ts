@@ -19,6 +19,27 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} Go`;
 }
 
+function feNormalizeDir(p: string): string {
+  return p.replace(/[\\/]+$/, "");
+}
+
+function feParentDir(filePath: string): string {
+  const p = feNormalizeDir(filePath);
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i <= 0 ? p : p.slice(0, i);
+}
+
+function feFileBasename(p: string): string {
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+
+function feJoinDirFile(dir: string, file: string): string {
+  const d = feNormalizeDir(dir);
+  const sep = d.includes("\\") ? "\\" : "/";
+  return d + sep + file;
+}
+
 // ── Tree node ───────────────────────────────────
 
 interface TreeNode {
@@ -62,6 +83,14 @@ export class FileExplorer {
   private contentEl!: HTMLElement;
   private pathInput!: HTMLInputElement;
   private btnConvert!: HTMLButtonElement | null;
+  private toolsMenuTrigger: HTMLButtonElement | null = null;
+
+  private readonly onToolsMenuOutsideMouseDown = (e: MouseEvent) => {
+    const dd = this.el.querySelector(".fe-dropdown");
+    if (dd && !dd.contains(e.target as Node)) {
+      this.closeToolsMenu();
+    }
+  };
 
   constructor(container: HTMLElement, panelId: PanelId) {
     this.api = window.electronApi;
@@ -73,15 +102,21 @@ export class FileExplorer {
   private buildShell(): void {
     const leftButtons = this.panelId === "left"
       ? `<button class="fe-btn fe-btn--convert" data-action="convert" title="Convertir WAV / AIFF / FLAC → MP3">MP3</button>` +
-        `<button class="fe-btn fe-btn--meta-ia" data-action="meta-ia" title="Récupérer les genres via IA">META IA</button>` +
-        `<button class="fe-btn fe-btn--autofolder" data-action="autofolder" title="Organiser les MP3 par artiste">Auto Folder</button>`
+        `<button class="fe-btn fe-btn--meta-ia" data-action="meta-ia" title="Récupérer les genres via IA">META IA</button>`
       : "";
 
     this.el.innerHTML = `
       <div class="fe-toolbar">
         <input class="fe-path" type="text" spellcheck="false" />
         <button class="fe-btn fe-btn--refresh" data-action="refresh" title="Rafraîchir">&#x21BB;</button>
-        <button class="fe-btn fe-btn--mkdir" data-action="mkdir" title="Nouveau dossier">&#x1F4C1;+</button>
+        <div class="fe-dropdown" data-fe-dropdown>
+          <button type="button" class="fe-btn fe-btn--tools fe-dropdown__trigger" data-action="tools-toggle" aria-expanded="false" aria-haspopup="menu" title="Outils">Tools</button>
+          <div class="fe-dropdown__menu" role="menu" hidden>
+            <button type="button" class="fe-dropdown__item" role="menuitem" data-action="sort-artist" title="Dossier par artiste seulement s'il y a au moins 2 MP3 ; les autres restent ici">Sort by artist</button>
+            <button type="button" class="fe-dropdown__item" role="menuitem" data-action="unsort-folders" title="Remonter les MP3 des sous-dossiers vers ce dossier">Unsort folders</button>
+          </div>
+        </div>
+        <button type="button" class="fe-btn fe-btn--mkdir" data-action="mkdir" title="Nouveau dossier">&#x1F4C1;+</button>
         ${leftButtons}
       </div>
       <div class="fe-body">
@@ -98,13 +133,26 @@ export class FileExplorer {
 
     this.el.querySelector('[data-action="refresh"]')
       ?.addEventListener("click", () => this.refresh());
+    this.toolsMenuTrigger = this.el.querySelector('[data-action="tools-toggle"]');
+    this.toolsMenuTrigger?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleToolsMenu();
+    });
+    this.el.querySelector('[data-action="sort-artist"]')
+      ?.addEventListener("click", () => {
+        this.closeToolsMenu();
+        void this.sortByArtist();
+      });
+    this.el.querySelector('[data-action="unsort-folders"]')
+      ?.addEventListener("click", () => {
+        this.closeToolsMenu();
+        void this.unsortFolders();
+      });
     this.el.querySelector('[data-action="mkdir"]')
-      ?.addEventListener("click", () => this.createFolder());
+      ?.addEventListener("click", () => void this.createFolder());
     this.btnConvert?.addEventListener("click", () => this.convertToMp3());
     this.el.querySelector('[data-action="meta-ia"]')
       ?.addEventListener("click", () => this.metaIA());
-    this.el.querySelector('[data-action="autofolder"]')
-      ?.addEventListener("click", () => this.autoFolder());
     this.pathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") this.selectPath(this.pathInput.value.trim());
     });
@@ -113,6 +161,9 @@ export class FileExplorer {
     this.initDropZone();
 
     this.el.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        this.closeToolsMenu();
+      }
       if (e.key === "Delete") {
         if (this.selectedEntries.size > 0) {
           e.preventDefault();
@@ -142,6 +193,38 @@ export class FileExplorer {
     this.el.tabIndex = -1;
 
     eventBus.on("clipboard-changed", () => this.applyCutStyle());
+  }
+
+  private isToolsMenuOpen(): boolean {
+    const menu = this.el.querySelector(".fe-dropdown__menu");
+    return menu !== null && !menu.hasAttribute("hidden");
+  }
+
+  private openToolsMenu(): void {
+    const menu = this.el.querySelector<HTMLElement>(".fe-dropdown__menu");
+    if (!menu) return;
+    menu.removeAttribute("hidden");
+    this.toolsMenuTrigger?.setAttribute("aria-expanded", "true");
+    window.setTimeout(() => {
+      document.addEventListener("mousedown", this.onToolsMenuOutsideMouseDown);
+    }, 0);
+  }
+
+  private closeToolsMenu(): void {
+    const menu = this.el.querySelector<HTMLElement>(".fe-dropdown__menu");
+    if (!menu) return;
+    if (menu.hasAttribute("hidden")) return;
+    menu.setAttribute("hidden", "");
+    this.toolsMenuTrigger?.setAttribute("aria-expanded", "false");
+    document.removeEventListener("mousedown", this.onToolsMenuOutsideMouseDown);
+  }
+
+  private toggleToolsMenu(): void {
+    if (this.isToolsMenuOpen()) {
+      this.closeToolsMenu();
+    } else {
+      this.openToolsMenu();
+    }
   }
 
   private applyCutStyle(): void {
@@ -859,20 +942,211 @@ export class FileExplorer {
       return;
     }
     const name = await showPrompt("Nom du nouveau dossier :");
-    if (!name) return;
+    if (!name?.trim()) return;
+    const cleanName = name.trim();
     const sep = this.currentPath.includes("/") ? "/" : "\\";
-    const newPath = this.currentPath + sep + name;
+    const newPath = this.currentPath + sep + cleanName;
     try {
       await this.api.fs.mkdir(newPath);
 
-      if (this.selectedNode) {
-        this.selectedNode.loaded = false;
-        await this.loadChildren(this.selectedNode);
+      const parentNode = this.findNode(this.currentPath);
+      if (parentNode) {
+        parentNode.loaded = false;
+        await this.loadChildren(parentNode);
       }
 
       await this.selectPath(newPath);
     } catch (err) {
       await showAlert(`Erreur lors de la création du dossier : ${err}`);
+    }
+  }
+
+  /**
+   * Crée un sous-dossier par artiste seulement si au moins 2 MP3 partagent le même artiste (tags) ;
+   * les MP3 uniques pour un artiste restent à la racine du dossier courant.
+   */
+  private async sortByArtist(): Promise<void> {
+    if (!this.currentPath) {
+      await showAlert("Sélectionnez d'abord un dossier.");
+      return;
+    }
+
+    const mp3Files = await this.api.fs.listMp3(this.currentPath);
+    if (mp3Files.length === 0) {
+      await showAlert("Aucun fichier MP3 dans ce dossier.");
+      return;
+    }
+
+    const artistMap = new Map<string, { name: string; path: string }[]>();
+    let skipped = 0;
+
+    for (const file of mp3Files) {
+      const meta = await this.api.audio.getMetadata(file.path);
+      const artist = meta.artist?.trim();
+      if (!artist) {
+        skipped++;
+        continue;
+      }
+      if (!artistMap.has(artist)) artistMap.set(artist, []);
+      artistMap.get(artist)!.push(file);
+    }
+
+    if (artistMap.size === 0) {
+      await showAlert("Aucun MP3 avec un artiste renseigné.");
+      return;
+    }
+
+    const multiMap = new Map(
+      [...artistMap.entries()].filter(([, files]) => files.length >= 2),
+    );
+
+    let singleArtistFiles = 0;
+    for (const [, files] of artistMap) {
+      if (files.length === 1) singleArtistFiles += 1;
+    }
+
+    if (multiMap.size === 0) {
+      await showAlert(
+        "Aucun artiste avec au moins 2 MP3 dans ce dossier. Les fichiers uniques restent en place.",
+      );
+      return;
+    }
+
+    const entries = [...multiMap.entries()]
+      .map(([artist, files]) => ({ artist, count: files.length }))
+      .sort((a, b) => a.artist.localeCompare(b.artist));
+
+    const confirmed = await showAutoFolderDialog(entries, skipped, {
+      singleArtistFiles: singleArtistFiles > 0 ? singleArtistFiles : undefined,
+    });
+    if (!confirmed) return;
+
+    let moved = 0;
+    const errors: string[] = [];
+    const sep = this.currentPath.includes("/") ? "/" : "\\";
+
+    // Dossier + déplacements uniquement pour les artistes avec ≥2 MP3 (les autres ne passent pas par ici).
+    for (const [artist, files] of multiMap) {
+      const folderName = artist.replace(/[<>:"/\\|?*]/g, "_");
+      const folderPath = this.currentPath + sep + folderName;
+
+      const exists = await this.api.fs.exists(folderPath);
+      if (!exists) {
+        try {
+          await this.api.fs.mkdir(folderPath);
+        } catch (err) {
+          errors.push(`Dossier "${folderName}": ${err}`);
+          continue;
+        }
+      }
+
+      for (const file of files) {
+        try {
+          await this.api.fs.move(file.path, folderPath);
+          moved++;
+        } catch (err) {
+          errors.push(`${file.name}: ${err}`);
+        }
+      }
+    }
+
+    await this.refreshBoth();
+
+    const summary = [`${moved} fichier(s) déplacé(s).`];
+    if (singleArtistFiles > 0) {
+      summary.push(`${singleArtistFiles} fichier(s) (artiste unique) laissé(s) à la racine.`);
+    }
+    if (skipped > 0) summary.push(`${skipped} fichier(s) sans artiste ignoré(s).`);
+    if (errors.length > 0) summary.push(`\nErreurs :\n${errors.join("\n")}`);
+    await showAlert(summary.join("\n"));
+  }
+
+  /** Liste récursive des chemins .mp3 dont le dossier parent n’est pas la racine `rootDir`. */
+  private async collectMp3PathsInSubfolders(rootDir: string): Promise<string[]> {
+    const rootNorm = feNormalizeDir(rootDir).toLowerCase();
+    const out: string[] = [];
+
+    const walk = async (dir: string): Promise<void> => {
+      const entries = await this.api.fs.readDirectory(dir);
+      for (const e of entries) {
+        if (e.isDirectory) {
+          await walk(e.path);
+        } else if (e.extension.toLowerCase() === ".mp3") {
+          const parentNorm = feNormalizeDir(feParentDir(e.path)).toLowerCase();
+          if (parentNorm !== rootNorm) {
+            out.push(e.path);
+          }
+        }
+      }
+    };
+
+    await walk(rootDir);
+    return out;
+  }
+
+  private async uniqueMp3BasenameInDir(destDir: string, preferred: string): Promise<string> {
+    const stem = preferred.replace(/\.mp3$/i, "");
+    const ext = ".mp3";
+    let n = 0;
+    let name = preferred;
+    while (await this.api.fs.exists(feJoinDirFile(destDir, name))) {
+      n += 1;
+      name = `${stem} (${n})${ext}`;
+    }
+    return name;
+  }
+
+  /** Déplace un MP3 vers `rootDir`, en renommant si un fichier du même nom existe déjà à la racine. */
+  private async moveMp3IntoRoot(srcPath: string, rootDir: string): Promise<void> {
+    const base = feFileBasename(srcPath);
+    const destName = await this.uniqueMp3BasenameInDir(rootDir, base);
+    let from = srcPath;
+    if (destName !== base) {
+      await this.api.fs.rename(from, destName);
+      from = feJoinDirFile(feParentDir(from), destName);
+    }
+    await this.api.fs.move(from, rootDir);
+  }
+
+  /** Remonte tous les MP3 des sous-dossiers vers le dossier courant. */
+  private async unsortFolders(): Promise<void> {
+    if (!this.currentPath) {
+      await showAlert("Sélectionnez d'abord un dossier.");
+      return;
+    }
+    const root = feNormalizeDir(this.currentPath);
+    const mp3s = await this.collectMp3PathsInSubfolders(root);
+    if (mp3s.length === 0) {
+      await showAlert("Aucun MP3 dans les sous-dossiers.");
+      return;
+    }
+    const ok = await showConfirm(
+      `Déplacer ${mp3s.length} fichier(s) MP3 depuis les sous-dossiers vers ce dossier ?\n\n` +
+        "Les fichiers déjà à la racine de ce dossier ne sont pas déplacés.",
+      { yes: "Déplacer", no: "Annuler" },
+    );
+    if (!ok) return;
+
+    const errors: string[] = [];
+    let moved = 0;
+    for (const src of mp3s) {
+      try {
+        await this.moveMp3IntoRoot(src, root);
+        moved += 1;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${feFileBasename(src)}: ${msg}`);
+      }
+    }
+
+    await this.refreshBoth();
+
+    if (errors.length > 0) {
+      const head = errors.slice(0, 10);
+      await showAlert(
+        `${moved} fichier(s) déplacé(s). ${errors.length} erreur(s) :\n\n${head.join("\n")}` +
+          (errors.length > 10 ? "\n…" : ""),
+      );
     }
   }
 
@@ -1049,82 +1323,6 @@ export class FileExplorer {
     const otherPanelId: PanelId = this.panelId === "left" ? "right" : "left";
     await this.refresh();
     eventBus.emit("refresh-panel", { panelId: otherPanelId });
-  }
-
-  // ── Auto Folder ───────────────────────────────
-
-  private async autoFolder(): Promise<void> {
-    if (!this.currentPath) {
-      await showAlert("Sélectionnez d'abord un dossier.");
-      return;
-    }
-
-    const mp3Files = await this.api.fs.listMp3(this.currentPath);
-    if (mp3Files.length === 0) {
-      await showAlert("Aucun fichier MP3 dans ce dossier.");
-      return;
-    }
-
-    const artistMap = new Map<string, { name: string; path: string }[]>();
-    let skipped = 0;
-
-    for (const file of mp3Files) {
-      const meta = await this.api.audio.getMetadata(file.path);
-      const artist = meta.artist?.trim();
-      if (!artist) {
-        skipped++;
-        continue;
-      }
-      if (!artistMap.has(artist)) artistMap.set(artist, []);
-      artistMap.get(artist)!.push(file);
-    }
-
-    if (artistMap.size === 0) {
-      await showAlert("Aucun MP3 avec un artiste renseigné.");
-      return;
-    }
-
-    const entries = [...artistMap.entries()]
-      .map(([artist, files]) => ({ artist, count: files.length }))
-      .sort((a, b) => a.artist.localeCompare(b.artist));
-
-    const confirmed = await showAutoFolderDialog(entries, mp3Files.length, skipped);
-    if (!confirmed) return;
-
-    let moved = 0;
-    const errors: string[] = [];
-    const sep = this.currentPath.includes("/") ? "/" : "\\";
-
-    for (const [artist, files] of artistMap) {
-      const folderName = artist.replace(/[<>:"/\\|?*]/g, "_");
-      const folderPath = this.currentPath + sep + folderName;
-
-      const exists = await this.api.fs.exists(folderPath);
-      if (!exists) {
-        try {
-          await this.api.fs.mkdir(folderPath);
-        } catch (err) {
-          errors.push(`Dossier "${folderName}": ${err}`);
-          continue;
-        }
-      }
-
-      for (const file of files) {
-        try {
-          await this.api.fs.move(file.path, folderPath);
-          moved++;
-        } catch (err) {
-          errors.push(`${file.name}: ${err}`);
-        }
-      }
-    }
-
-    await this.refreshBoth();
-
-    const summary = [`${moved} fichier(s) déplacé(s).`];
-    if (skipped > 0) summary.push(`${skipped} fichier(s) sans artiste ignoré(s).`);
-    if (errors.length > 0) summary.push(`\nErreurs :\n${errors.join("\n")}`);
-    await showAlert(summary.join("\n"));
   }
 
   // ── META IA ────────────────────────────────────

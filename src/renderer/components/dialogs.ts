@@ -304,8 +304,8 @@ export function showMetaIADialog(
 
 export function showAutoFolderDialog(
   entries: { artist: string; count: number }[],
-  totalFiles: number,
-  skipped: number,
+  skippedNoArtist: number,
+  options?: { singleArtistFiles?: number },
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const overlay = createOverlay();
@@ -316,10 +316,11 @@ export function showAutoFolderDialog(
     box.style.flexDirection = "column";
     box.style.minWidth = "400px";
 
+    const toMove = entries.reduce((s, e) => s + e.count, 0);
     const title = document.createElement("div");
     title.className = "dialog-message";
     title.style.fontWeight = "700";
-    title.textContent = `Organiser ${totalFiles - skipped} fichier(s) dans ${entries.length} sous-dossier(s)`;
+    title.textContent = `Créer ${entries.length} dossier(s) et y déplacer ${toMove} fichier(s) (au moins 2 MP3 par artiste)`;
     box.appendChild(title);
 
     const list = document.createElement("div");
@@ -332,12 +333,21 @@ export function showAutoFolderDialog(
     }
     box.appendChild(list);
 
-    if (skipped > 0) {
+    if (options?.singleArtistFiles !== undefined && options.singleArtistFiles > 0) {
+      const noteSingle = document.createElement("div");
+      noteSingle.className = "dialog-message";
+      noteSingle.style.fontSize = "11px";
+      noteSingle.style.color = "var(--color-text-muted)";
+      noteSingle.textContent = `${options.singleArtistFiles} fichier(s) (un seul MP3 pour cet artiste) restent à la racine.`;
+      box.appendChild(noteSingle);
+    }
+
+    if (skippedNoArtist > 0) {
       const note = document.createElement("div");
       note.className = "dialog-message";
       note.style.fontSize = "11px";
       note.style.color = "var(--color-text-muted)";
-      note.textContent = `${skipped} fichier(s) sans artiste seront ignorés.`;
+      note.textContent = `${skippedNoArtist} fichier(s) sans artiste seront ignorés.`;
       box.appendChild(note);
     }
 

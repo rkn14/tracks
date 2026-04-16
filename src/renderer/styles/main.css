@@ -417,7 +417,57 @@ body {
 .fe-btn--mkdir {
   font-size: 11px;
   width: auto;
+  min-width: 36px;
   padding: 0 6px;
+}
+
+.fe-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.fe-btn--tools {
+  width: auto;
+  min-width: 44px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.fe-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 200;
+  min-width: 168px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.fe-dropdown__item {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.fe-dropdown__item:hover {
+  background: var(--color-hover);
 }
 
 .fe-btn--convert {
@@ -452,21 +502,6 @@ body {
 
 .fe-btn--meta-ia:hover:not(:disabled) {
   background: #6ec6ff;
-  color: #111;
-}
-
-.fe-btn--autofolder {
-  width: auto;
-  padding: 0 8px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: #a8e06c;
-  border: 1px solid #a8e06c;
-}
-
-.fe-btn--autofolder:hover:not(:disabled) {
-  background: #a8e06c;
   color: #111;
 }
 
