@@ -369,6 +369,126 @@ body {
   font-style: italic;
 }
 
+/* ── Playlists (Engine DJ DB) ───────────────── */
+
+.dj-playlists {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.dj-playlists__banner {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-danger, #e85d5d);
+  background: color-mix(in srgb, var(--color-danger, #c44) 12%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dj-playlists__cols.fe-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.dj-playlists__pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dj-playlists__pane-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: var(--toolbar-h);
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dj-pl-tree,
+.dj-pl-tracks {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Arborescence playlists : mêmes blocs que l’explorateur (fe-tree-item, flèches) */
+.dj-pl-folder > summary {
+  list-style: none;
+}
+
+.dj-pl-folder > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dj-pl-folder[open] > summary .fe-tree-arrow {
+  transform: rotate(90deg);
+}
+
+button.fe-tree-item.dj-pl-tree-leaf {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Playlist active : plus lisible que le seul fond global `.fe-tree-item.is-selected` */
+.dj-pl-tree .fe-tree-item.is-selected {
+  background: color-mix(in srgb, var(--color-accent) 24%, var(--color-selected));
+  box-shadow: inset 3px 0 0 0 var(--color-accent);
+  border-radius: 4px;
+}
+
+.dj-pl-tree .fe-tree-item.is-selected .fe-tree-label {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dj-pl-tree .fe-tree-item.is-selected:hover {
+  background: color-mix(in srgb, var(--color-accent) 32%, var(--color-hover));
+}
+
+/* Liste de pistes : grille type fe-row, colonnes titre / artiste / fichier */
+.fe-row.fe-row--playlist-tracks {
+  grid-template-columns: 24px minmax(0, 1.25fr) minmax(0, 0.9fr) minmax(0, 1fr);
+}
+
+.fe-row--playlist-tracks.dj-pl-track-drop-before {
+  box-shadow: inset 0 3px 0 0 var(--color-accent);
+}
+
+.fe-row--playlist-tracks.dj-pl-track-drop-after {
+  box-shadow: inset 0 -3px 0 0 var(--color-accent);
+}
+
+.fe-row.fe-row--playlist-tracks .fe-row__size--playlist {
+  text-align: left;
+  padding-right: 4px;
+}
+
+.fe-row.fe-row--playlist-tracks .fe-row__ext--playlist {
+  text-align: left;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  letter-spacing: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .panel-divider {
   background: var(--color-border);
   cursor: col-resize;

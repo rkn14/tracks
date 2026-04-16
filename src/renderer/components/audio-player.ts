@@ -660,7 +660,7 @@ export class AudioPlayer {
     dataArray: Uint8Array,
     w: number, h: number, dpr: number,
   ): void {
-    analyser.getByteFrequencyData(dataArray);
+    analyser.getByteFrequencyData(dataArray as Uint8Array<ArrayBuffer>);
 
     const barCount = 128;
     const barWidth = w / barCount;
@@ -683,7 +683,7 @@ export class AudioPlayer {
     dataArray: Uint8Array,
     w: number, h: number, dpr: number,
   ): void {
-    analyser.getByteTimeDomainData(dataArray);
+    analyser.getByteTimeDomainData(dataArray as Uint8Array<ArrayBuffer>);
 
     const cx = w / 2;
     const cy = h / 2;

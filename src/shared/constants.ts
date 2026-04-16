@@ -19,4 +19,6 @@ export const STORE_KEYS = {
   OPENAI_API_KEY: "openaiApiKey",
   GENRE_PROMPT: "genrePrompt",
   LIBRARY_FOLDER: "libraryFolder",
+  /** Chemin absolu vers la base SQLite du moteur DJ (ex. Rekordbox `m.db`). */
+  ENGINE_DJ_DATABASE_PATH: "engineDjDatabasePath",
 } as const;

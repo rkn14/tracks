@@ -20,6 +20,7 @@
           <nav class="settings-tabs">
             <button class="settings-tab is-active" data-tab="general">Général</button>
             <button class="settings-tab" data-tab="llm">LLM</button>
+            <button class="settings-tab" data-tab="engine-dj">Engine DJ</button>
           </nav>
           <div class="settings-body">
             <div class="settings-page is-active" data-page="general">
@@ -29,6 +30,12 @@
                   <input class="settings-input" id="input-library-folder" type="text" placeholder="Aucun dossier sélectionné" spellcheck="false" readonly />
                   <button class="dialog-btn dialog-btn--primary settings-browse" id="btn-browse-library">Parcourir</button>
                 </div>
+              </div>
+            </div>
+            <div class="settings-page" data-page="engine-dj">
+              <div class="settings-field">
+                <label class="settings-label" for="input-engine-dj-db">database path</label>
+                <input class="settings-input" id="input-engine-dj-db" type="text" spellcheck="false" placeholder="J:\m.db" />
               </div>
             </div>
             <div class="settings-page" data-page="llm">
@@ -68,9 +75,7 @@
             <button class="panel-tabs__btn" data-panel-tab="playlists">Playlists</button>
           </nav>
           <div class="panel-tab-page is-active" data-panel-page="folders" id="panel-left"></div>
-          <div class="panel-tab-page" data-panel-page="playlists" id="panel-playlists">
-            <div class="panel-tab-empty">Playlists — à venir</div>
-          </div>
+          <div class="panel-tab-page" data-panel-page="playlists" id="panel-playlists"></div>
         </div>
         <div class="panel-divider"></div>
         <div class="panel" id="panel-right"></div>

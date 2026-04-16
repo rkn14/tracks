@@ -76,7 +76,6 @@ export class FileExplorer {
   private selectedNode: TreeNode | null = null;
   private renameClickTimer: ReturnType<typeof setTimeout> | null = null;
   private lastClickedNodePath: string | null = null;
-  private selectedEntry: FileEntry | null = null;
   private selectedEntries: Set<FileEntry> = new Set();
 
   private treeEl!: HTMLElement;
@@ -573,7 +572,6 @@ export class FileExplorer {
 
     // Walk down the path
     const relative = targetPath.slice(root.path.length);
-    const sep = root.path.includes("/") ? "/" : "\\";
     const segments = relative.split(/[\\/]/).filter(Boolean);
 
     let current = root;
@@ -642,7 +640,6 @@ export class FileExplorer {
   }
 
   private createTreeItem(node: TreeNode, depth: number): HTMLElement {
-    const frag = document.createDocumentFragment() as unknown as HTMLElement;
     const wrapper = document.createElement("div");
 
     const row = document.createElement("div");
@@ -730,7 +727,6 @@ export class FileExplorer {
 
   private async loadContent(dirPath: string): Promise<void> {
     this.loading = true;
-    this.selectedEntry = null;
     this.selectedEntries.clear();
     this.lastClickedIndex = -1;
     try {
@@ -871,7 +867,6 @@ export class FileExplorer {
     }
 
     this.lastClickedIndex = index;
-    this.selectedEntry = entry;
     this.el.focus();
   }
 

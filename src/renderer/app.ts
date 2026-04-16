@@ -1,6 +1,7 @@
 import type { ElectronApi, PanelState } from "@shared/types";
 import { STORE_KEYS } from "@shared/constants";
 import { FileExplorer } from "./components/file-explorer";
+import { PlaylistsPanel } from "./components/playlists-panel";
 import { AudioPlayer } from "./components/audio-player";
 import { eventBus } from "./lib/event-bus";
 declare global {
@@ -26,6 +27,7 @@ export async function initApp(): Promise<void> {
   // ── Settings panel ────────────────────────────
   const settingsOverlay = document.getElementById("settings-overlay")!;
   const libraryInput = document.getElementById("input-library-folder") as HTMLInputElement;
+  const engineDjDbInput = document.getElementById("input-engine-dj-db") as HTMLInputElement;
   const openaiInput = document.getElementById("input-openai-key") as HTMLInputElement;
   const genrePromptInput = document.getElementById("input-genre-prompt") as HTMLTextAreaElement;
 
@@ -49,15 +51,23 @@ export async function initApp(): Promise<void> {
     if (folder) libraryInput.value = folder;
   });
 
+  const defaultEngineDjDb = "J:\\m.db";
+
+  const playlistsPanel = new PlaylistsPanel(
+    document.getElementById("panel-playlists")!,
+  );
+
   const openSettings = async () => {
-    const [savedKey, savedPrompt, savedLibrary] = await Promise.all([
+    const [savedKey, savedPrompt, savedLibrary, savedEngineDjDb] = await Promise.all([
       electronApi.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
       electronApi.store.get<string>(STORE_KEYS.GENRE_PROMPT),
       electronApi.store.get<string>(STORE_KEYS.LIBRARY_FOLDER),
+      electronApi.store.get<string>(STORE_KEYS.ENGINE_DJ_DATABASE_PATH),
     ]);
     openaiInput.value = savedKey ?? "";
     genrePromptInput.value = savedPrompt ?? "";
     libraryInput.value = savedLibrary ?? "";
+    engineDjDbInput.value = savedEngineDjDb?.trim() || defaultEngineDjDb;
     settingsOverlay.hidden = false;
   };
 
@@ -69,14 +79,17 @@ export async function initApp(): Promise<void> {
 
   const saveSettings = async () => {
     const newLibrary = libraryInput.value.trim();
+    const engineDjDb = engineDjDbInput.value.trim() || defaultEngineDjDb;
     await Promise.all([
       electronApi.store.set(STORE_KEYS.OPENAI_API_KEY, openaiInput.value.trim()),
       electronApi.store.set(STORE_KEYS.GENRE_PROMPT, genrePromptInput.value),
       electronApi.store.set(STORE_KEYS.LIBRARY_FOLDER, newLibrary),
+      electronApi.store.set(STORE_KEYS.ENGINE_DJ_DATABASE_PATH, engineDjDb),
     ]);
     if (rightPanel && newLibrary) {
       await rightPanel.setLockedRoot(newLibrary);
     }
+    await playlistsPanel.reconnect();
     closeSettings();
   };
 
@@ -129,6 +142,8 @@ export async function initApp(): Promise<void> {
   if (savedLibrary) {
     await rightPanel.setLockedRoot(savedLibrary);
   }
+
+  await playlistsPanel.init();
 
   // After a move/delete, the other panel asks to be refreshed
   eventBus.on("refresh-panel", ({ panelId }) => {

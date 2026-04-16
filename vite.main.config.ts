@@ -14,5 +14,8 @@ export default defineConfig({
       fileName: () => "main.js",
       formats: ["cjs"],
     },
+    rollupOptions: {
+      external: ["electron", "better-sqlite3"],
+    },
   },
 });

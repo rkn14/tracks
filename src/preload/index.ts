@@ -78,6 +78,28 @@ const electronApi: ElectronApi = {
     get: (key) => ipcRenderer.invoke(IpcChannel.STORE_GET, key),
     set: (key, value) => ipcRenderer.invoke(IpcChannel.STORE_SET, key, value),
   },
+
+  engineDj: {
+    connect: () => ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_CONNECT),
+    getPlaylistTree: () =>
+      ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_PLAYLIST_TREE),
+    getPlaylistTracks: (listId) =>
+      ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_PLAYLIST_TRACKS, listId),
+    addChildPlaylist: (params) =>
+      ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_ADD_CHILD_PLAYLIST, params),
+    addTrackToPlaylist: (params) =>
+      ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_ADD_TRACK_TO_PLAYLIST, params),
+    removeTrackFromPlaylist: (params) =>
+      ipcRenderer.invoke(
+        IpcChannel.ENGINE_DJ_DB_REMOVE_TRACK_FROM_PLAYLIST,
+        params,
+      ),
+    reorderPlaylistTracks: (params) =>
+      ipcRenderer.invoke(
+        IpcChannel.ENGINE_DJ_DB_REORDER_PLAYLIST_TRACKS,
+        params,
+      ),
+  },
 };
 
 contextBridge.exposeInMainWorld("electronApi", electronApi);

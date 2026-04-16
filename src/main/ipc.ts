@@ -1,6 +1,14 @@
 import { BrowserWindow, type IpcMain, app, dialog } from "electron";
 import fs from "fs/promises";
-import { IpcChannel, type EssentiaAnalysis, type ProfileScores } from "@shared/types";
+import {
+  IpcChannel,
+  type DjAddChildPlaylistParams,
+  type DjAddTrackToPlaylistParams,
+  type DjRemoveTrackFromPlaylistParams,
+  type DjReorderPlaylistTracksParams,
+  type EssentiaAnalysis,
+  type ProfileScores,
+} from "@shared/types";
 import {
   listVolumes,
   readDirectory,
@@ -23,6 +31,15 @@ import { writeProfileScores } from "./services/profile-scores";
 import { extractEssentiaFromFile } from "./services/essentia-extractor";
 import { fetchGenresFromAI } from "./services/ai";
 import { storeGet, storeSet } from "./services/store";
+import {
+  djDbAddChildPlaylist,
+  djDbAddTrackToPlaylist,
+  djDbConnectFromStore,
+  djDbGetPlaylistTracks,
+  djDbGetPlaylistTree,
+  djDbRemoveTrackFromPlaylist,
+  djDbReorderPlaylistTracks,
+} from "./services/engine-dj-db";
 
 export function registerIpcHandlers(ipcMain: IpcMain): void {
   // ── Window ───────────────────────────────────
@@ -156,5 +173,41 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(
     IpcChannel.STORE_SET,
     (_, key: string, value: unknown) => storeSet(key, value),
+  );
+
+  // ── Engine DJ SQLite library ───────────────
+  ipcMain.handle(IpcChannel.ENGINE_DJ_DB_CONNECT, () => djDbConnectFromStore());
+
+  ipcMain.handle(IpcChannel.ENGINE_DJ_DB_PLAYLIST_TREE, () =>
+    djDbGetPlaylistTree(),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_PLAYLIST_TRACKS,
+    (_, listId: number) => djDbGetPlaylistTracks(listId),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_ADD_CHILD_PLAYLIST,
+    (_, params: DjAddChildPlaylistParams) =>
+      djDbAddChildPlaylist(params.parentListId, params.title),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_ADD_TRACK_TO_PLAYLIST,
+    (_, params: DjAddTrackToPlaylistParams) =>
+      djDbAddTrackToPlaylist(params.destListId, params.trackId),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_REMOVE_TRACK_FROM_PLAYLIST,
+    (_, params: DjRemoveTrackFromPlaylistParams) =>
+      djDbRemoveTrackFromPlaylist(params.listId, params.entityId),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_REORDER_PLAYLIST_TRACKS,
+    (_, params: DjReorderPlaylistTracksParams) =>
+      djDbReorderPlaylistTracks(params.listId, params.entityIds),
   );
 }

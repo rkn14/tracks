@@ -35,6 +35,16 @@ export const IpcChannel = {
 
   STORE_GET: "store:get",
   STORE_SET: "store:set",
+
+  ENGINE_DJ_DB_CONNECT: "engine-dj-db:connect",
+  ENGINE_DJ_DB_PLAYLIST_TREE: "engine-dj-db:playlist-tree",
+  ENGINE_DJ_DB_PLAYLIST_TRACKS: "engine-dj-db:playlist-tracks",
+  ENGINE_DJ_DB_ADD_CHILD_PLAYLIST: "engine-dj-db:add-child-playlist",
+  ENGINE_DJ_DB_ADD_TRACK_TO_PLAYLIST: "engine-dj-db:add-track-to-playlist",
+  ENGINE_DJ_DB_REMOVE_TRACK_FROM_PLAYLIST:
+    "engine-dj-db:remove-track-from-playlist",
+  ENGINE_DJ_DB_REORDER_PLAYLIST_TRACKS:
+    "engine-dj-db:reorder-playlist-tracks",
 } as const;
 
 export type IpcChannelValue =
@@ -149,6 +159,69 @@ export interface PanelState {
   currentPath: string;
 }
 
+// ── Engine DJ library (SQLite) ────────────────
+
+export interface DjDbConnectResult {
+  ok: boolean;
+  path: string;
+  error?: string;
+}
+
+export interface DjPlaylistNode {
+  id: number;
+  title: string | null;
+  parentListId: number | null;
+  /** Chaînage frères (ordre d’affichage côté Engine DJ / Rekordbox). */
+  nextListId: number | null;
+  children: DjPlaylistNode[];
+}
+
+export interface DjPlaylistTrackRow {
+  entityId: number;
+  trackId: number;
+  title: string | null;
+  artist: string | null;
+  path: string | null;
+  filename: string | null;
+}
+
+export interface DjAddChildPlaylistParams {
+  parentListId: number;
+  title: string;
+}
+
+export interface DjAddPlaylistResult {
+  ok: boolean;
+  id?: number;
+  error?: string;
+}
+
+export interface DjAddTrackToPlaylistParams {
+  destListId: number;
+  trackId: number;
+}
+
+export interface DjAddTrackToPlaylistResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface DjRemoveTrackFromPlaylistParams {
+  listId: number;
+  entityId: number;
+}
+
+export interface DjReorderPlaylistTracksParams {
+  listId: number;
+  /** Ordre complet des `PlaylistEntity.id` (tête → queue). */
+  entityIds: number[];
+}
+
+export interface DjPlaylistTrackMutationResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface AppState {
   leftPanel: PanelState;
   rightPanel: PanelState;
@@ -209,5 +282,23 @@ export interface ElectronApi {
   store: {
     get: <T>(key: string) => Promise<T | undefined>;
     set: (key: string, value: unknown) => Promise<void>;
+  };
+
+  engineDj: {
+    connect: () => Promise<DjDbConnectResult>;
+    getPlaylistTree: () => Promise<DjPlaylistNode[]>;
+    getPlaylistTracks: (listId: number) => Promise<DjPlaylistTrackRow[]>;
+    addChildPlaylist: (
+      params: DjAddChildPlaylistParams,
+    ) => Promise<DjAddPlaylistResult>;
+    addTrackToPlaylist: (
+      params: DjAddTrackToPlaylistParams,
+    ) => Promise<DjAddTrackToPlaylistResult>;
+    removeTrackFromPlaylist: (
+      params: DjRemoveTrackFromPlaylistParams,
+    ) => Promise<DjPlaylistTrackMutationResult>;
+    reorderPlaylistTracks: (
+      params: DjReorderPlaylistTracksParams,
+    ) => Promise<DjPlaylistTrackMutationResult>;
   };
 }
