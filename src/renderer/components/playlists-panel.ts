@@ -1,10 +1,17 @@
 import type { DjPlaylistNode, DjPlaylistTrackRow, ElectronApi } from "@shared/types";
+import { formatDurationMmSsFromMs } from "@shared/format-duration";
 import {
   audioPathsEqual,
   formatGeneralRowStars,
   isProfileScorableFilePath,
+  orderedActiveProfileTagIds,
 } from "@shared/profile-stars";
 import { fillListRowActiveTagsContainer } from "../lib/fill-active-tags-row";
+import {
+  comparePlaylistListRows,
+  fileListSortTiebreakName,
+  type FileListPlaylistSortKey,
+} from "../lib/file-list-sort";
 import { contextMenu, type ContextMenuEntry } from "./context-menu";
 import { showAlert, showConfirm, showPrompt } from "./dialogs";
 import { eventBus } from "../lib/event-bus";
@@ -35,6 +42,24 @@ interface TrackDragPayload {
   entityId: number;
 }
 
+interface AugmentedPlaylistTrack {
+  row: DjPlaylistTrackRow;
+  /** Position d’origine 1..n (ordre Engine DJ) — stable au tri. */
+  order: number;
+}
+
+function plTrackFileExt(
+  path: string | null,
+  filename: string | null,
+): string {
+  const base =
+    filename && /[.][a-z0-9]+$/i.test(filename)
+      ? filename
+      : (path ?? "");
+  const m = base.match(/\.([a-z0-9]+)$/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
 export class PlaylistsPanel {
   private readonly api = window.electronApi;
   private readonly root: HTMLElement;
@@ -49,6 +74,20 @@ export class PlaylistsPanel {
   private activeTrackDrag: TrackDragPayload | null = null;
   /** Chemins absolus pendant un drag depuis l’explorateur (`getData` souvent vide en `dragover`). */
   private libraryDragPaths: string[] | null = null;
+
+  private playlistSortKey: FileListPlaylistSortKey = "order";
+  private playlistSortDir: 1 | -1 = 1;
+  private durationLoadGen = 0;
+  private playlistViewAug: AugmentedPlaylistTrack[] = [];
+  private playlistFileSortMeta = new Map<
+    string,
+    {
+      durationMs: number;
+      rating0to5: number;
+      tagCount: number;
+      tagsKey: string;
+    }
+  >();
 
   constructor(container: HTMLElement) {
     container.replaceChildren();
@@ -84,6 +123,7 @@ export class PlaylistsPanel {
     eventBus.on("profile-scores-updated", ({ filePath }) => {
       this.updateTrackGeneralStarsForFilePath(filePath);
     });
+    this.initPlaylistListSort();
 
     this.root.tabIndex = -1;
     this.root.addEventListener("keydown", (e) => {
@@ -162,6 +202,94 @@ export class PlaylistsPanel {
     this.tracksEl.classList.remove("dj-pl-tracks--library-drop-target");
   }
 
+  private initPlaylistListSort(): void {
+    this.tracksEl.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+        "[data-fe-sort][data-fe-list=\"playlist\"]",
+      );
+      if (!btn || !this.tracksEl.contains(btn)) return;
+      e.preventDefault();
+      const key = btn.dataset.feSort as FileListPlaylistSortKey | undefined;
+      if (!key) return;
+      if (this.playlistSortKey === key) {
+        this.playlistSortDir = this.playlistSortDir === 1 ? -1 : 1;
+      } else {
+        this.playlistSortKey = key;
+        this.playlistSortDir = 1;
+      }
+      this.syncPlaylistHeaderSortUi();
+      this.reorderPlaylistRows();
+    });
+  }
+
+  private buildPlaylistListHeader(): HTMLElement {
+    const h = document.createElement("div");
+    h.className = "fe-list-header fe-list-header--playlist";
+    h.setAttribute("role", "row");
+    const mk = (sort: FileListPlaylistSortKey, label: string) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "fe-list-header__btn";
+      b.dataset.feList = "playlist";
+      b.dataset.feSort = sort;
+      b.textContent = label;
+      return b;
+    };
+    const icon = document.createElement("span");
+    icon.className = "fe-list-header__cell fe-list-header__cell--icon";
+    icon.setAttribute("aria-hidden", "true");
+    h.append(
+      mk("order", "#"),
+      icon,
+      mk("name", "Nom"),
+      mk("tags", "Tags"),
+      mk("rating", "Note"),
+      mk("duration", "Dur\u00e9e"),
+      mk("ext", "Type"),
+    );
+    this.syncPlaylistHeaderSortUiOn(h);
+    return h;
+  }
+
+  private syncPlaylistHeaderSortUiOn(header: HTMLElement): void {
+    header.querySelectorAll<HTMLButtonElement>("[data-fe-sort]").forEach((b) => {
+      b.classList.remove("is-sorted", "is-sorted-desc");
+      b.removeAttribute("aria-pressed");
+      if (b.dataset.feSort === this.playlistSortKey) {
+        b.classList.add("is-sorted");
+        if (this.playlistSortDir === -1) b.classList.add("is-sorted-desc");
+        b.setAttribute("aria-pressed", "true");
+      }
+    });
+  }
+
+  private syncPlaylistHeaderSortUi(): void {
+    const h = this.tracksEl.querySelector<HTMLElement>(
+      ".fe-list-header--playlist",
+    );
+    if (h) this.syncPlaylistHeaderSortUiOn(h);
+  }
+
+  private reorderPlaylistRows(): void {
+    const header = this.tracksEl.querySelector(".fe-list-header--playlist");
+    const rows = [
+      ...this.tracksEl.querySelectorAll<HTMLElement>(".fe-row--playlist-tracks"),
+    ];
+    if (rows.length === 0) return;
+    const key = this.playlistSortKey;
+    const dir = this.playlistSortDir;
+    rows.sort((a, b) => {
+      let c = comparePlaylistListRows(a, b, key, dir);
+      if (c === 0) c = fileListSortTiebreakName(a, b);
+      return c;
+    });
+    if (header) {
+      this.tracksEl.replaceChildren(header, ...rows);
+    } else {
+      this.tracksEl.replaceChildren(...rows);
+    }
+  }
+
   private updateTrackGeneralStarsForFilePath(filePath: string): void {
     for (const row of this.tracksEl.querySelectorAll<HTMLElement>(
       ".fe-row--playlist-tracks",
@@ -170,11 +298,12 @@ export class PlaylistsPanel {
       if (!p || !audioPathsEqual(p, filePath)) continue;
       const stars = row.querySelector<HTMLElement>(".fe-row__general-stars");
       const tags = row.querySelector<HTMLElement>(".fe-row__active-tags");
-      if (stars && tags) void this.loadRowProfileListMeta(stars, tags, p);
+      if (stars && tags) void this.loadRowProfileListMeta(row, stars, tags, p);
     }
   }
 
   private async loadRowProfileListMeta(
+    row: HTMLElement,
     starsEl: HTMLElement,
     tagsEl: HTMLElement,
     filePath: string,
@@ -183,17 +312,99 @@ export class PlaylistsPanel {
       starsEl.textContent = "";
       tagsEl.textContent = "";
       tagsEl.removeAttribute("aria-label");
+      row.dataset.sortRating = "0";
+      row.dataset.sortTagCount = "0";
+      row.dataset.sortTagsKey = "";
+      const prev = this.playlistFileSortMeta.get(filePath) ?? {
+        durationMs: 0,
+        rating0to5: 0,
+        tagCount: 0,
+        tagsKey: "",
+      };
+      this.playlistFileSortMeta.set(filePath, {
+        ...prev,
+        rating0to5: 0,
+        tagCount: 0,
+        tagsKey: "",
+      });
+      if (["rating", "tags"].includes(this.playlistSortKey)) {
+        this.reorderPlaylistRows();
+      }
       return;
     }
     try {
       const meta = await this.api.audio.getMetadata(filePath);
       starsEl.textContent = formatGeneralRowStars(meta.profileScores?.general);
       fillListRowActiveTagsContainer(tagsEl, meta.activeProfileTags);
+      const g = meta.profileScores?.general;
+      const rating0to5 =
+        g == null || !Number.isFinite(g)
+          ? 0
+          : Math.min(5, Math.max(0, Math.round(g / 20)));
+      const active = meta.activeProfileTags;
+      const ordered = orderedActiveProfileTagIds(active);
+      const tagsKey = ordered.join("\u0000");
+      row.dataset.sortRating = String(rating0to5);
+      row.dataset.sortTagCount = String(ordered.length);
+      row.dataset.sortTagsKey = tagsKey;
+      const durationMs = Number(row.dataset.sortDuration) || 0;
+      const base = this.playlistFileSortMeta.get(filePath);
+      this.playlistFileSortMeta.set(filePath, {
+        durationMs: base?.durationMs ?? durationMs,
+        rating0to5,
+        tagCount: ordered.length,
+        tagsKey,
+      });
+      if (["rating", "tags"].includes(this.playlistSortKey)) {
+        this.reorderPlaylistRows();
+      }
     } catch {
       starsEl.textContent = "";
       tagsEl.textContent = "";
       tagsEl.removeAttribute("aria-label");
     }
+  }
+
+  private schedulePlaylistDurationLoads(
+    gen: number,
+    jobs: { el: HTMLElement; path: string; row: HTMLElement }[],
+  ): void {
+    if (jobs.length === 0) return;
+    const batchSize = 4;
+    void (async () => {
+      for (let i = 0; i < jobs.length; i += batchSize) {
+        if (gen !== this.durationLoadGen) return;
+        const slice = jobs.slice(i, i + batchSize);
+        await Promise.all(
+          slice.map(async ({ el, path, row }) => {
+            if (gen !== this.durationLoadGen) return;
+            try {
+              const meta = await this.api.audio.getMetadata(path);
+              if (gen !== this.durationLoadGen) return;
+              const ms = meta.duration;
+              const msN =
+                ms != null && ms > 0 ? Math.round(ms) : 0;
+              el.textContent =
+                msN > 0 ? formatDurationMmSsFromMs(msN) : "\u2014";
+              row.dataset.sortDuration = String(msN);
+              const prev = this.playlistFileSortMeta.get(path) ?? {
+                durationMs: 0,
+                rating0to5: 0,
+                tagCount: 0,
+                tagsKey: "",
+              };
+              this.playlistFileSortMeta.set(path, { ...prev, durationMs: msN });
+              if (this.playlistSortKey === "duration") {
+                this.reorderPlaylistRows();
+              }
+            } catch {
+              if (gen !== this.durationLoadGen) return;
+              el.textContent = "\u2014";
+            }
+          }),
+        );
+      }
+    })();
   }
 
   private parseTrackDragPayload(raw: string): TrackDragPayload | null {
@@ -405,7 +616,7 @@ export class PlaylistsPanel {
     if (!Number.isFinite(entityId)) return;
 
     const title =
-      row.querySelector(".fe-row__name")?.textContent?.trim() || "cette piste";
+      row.querySelector(".fe-row__basename")?.textContent?.trim() || "cette piste";
 
     const confirmed = await showConfirm(
       `Retirer « ${title} » de la playlist ?\nLe fichier audio ne sera pas supprimé du disque.`,
@@ -801,6 +1012,8 @@ export class PlaylistsPanel {
 
   async reconnect(): Promise<void> {
     this.viewedPlaylistId = null;
+    this.playlistViewAug = [];
+    this.playlistFileSortMeta.clear();
     this.clearTracksPaneLibraryDropHighlight();
     this.clearSelectionHighlight();
     this.banner.hidden = true;
@@ -886,6 +1099,7 @@ export class PlaylistsPanel {
 
   private showTracksPlaceholder(text: string): void {
     this.tracksEl.replaceChildren();
+    this.tracksEl.classList.remove("fe-content--list", "fe-content--list-playlist");
     const empty = document.createElement("div");
     empty.className = "fe-empty";
     empty.textContent = text;
@@ -894,10 +1108,13 @@ export class PlaylistsPanel {
 
   private async selectPlaylist(listId: number, sourceEl: HTMLElement): Promise<void> {
     this.viewedPlaylistId = listId;
+    this.playlistSortKey = "order";
+    this.playlistSortDir = 1;
     this.clearSelectionHighlight();
     sourceEl.classList.add("is-selected");
 
     this.tracksEl.replaceChildren();
+    this.tracksEl.classList.remove("fe-content--list", "fe-content--list-playlist");
     const loading = document.createElement("div");
     loading.className = "fe-empty";
     loading.textContent = "Chargement…";
@@ -910,9 +1127,8 @@ export class PlaylistsPanel {
         this.showTracksPlaceholder("Cette liste ne contient aucune piste.");
         return;
       }
-      for (const row of rows) {
-        this.tracksEl.appendChild(this.renderTrackRow(row, listId));
-      }
+      this.playlistViewAug = rows.map((r, i) => ({ row: r, order: i + 1 }));
+      this.renderPlaylistView(listId, this.playlistViewAug);
       this.root.focus({ preventScroll: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -920,57 +1136,121 @@ export class PlaylistsPanel {
     }
   }
 
+  private renderPlaylistView(
+    listId: number,
+    aug: AugmentedPlaylistTrack[],
+  ): void {
+    this.playlistViewAug = aug;
+    this.playlistFileSortMeta.clear();
+    this.durationLoadGen += 1;
+    const gen = this.durationLoadGen;
+    this.tracksEl.classList.add("fe-content--list", "fe-content--list-playlist");
+    this.tracksEl.replaceChildren();
+    this.tracksEl.appendChild(this.buildPlaylistListHeader());
+    const durationJobs: { el: HTMLElement; path: string; row: HTMLElement }[] =
+      [];
+    for (const a of aug) {
+      this.tracksEl.appendChild(
+        this.renderTrackRow(a, listId, durationJobs),
+      );
+    }
+    this.schedulePlaylistDurationLoads(gen, durationJobs);
+    this.syncPlaylistHeaderSortUi();
+  }
+
   private renderTrackRow(
-    row: DjPlaylistTrackRow,
+    aug: AugmentedPlaylistTrack,
     sourceListId: number,
+    durationJobs: { el: HTMLElement; path: string; row: HTMLElement }[],
   ): HTMLElement {
+    const row = aug.row;
     const el = document.createElement("div");
-    el.className = "fe-row fe-row--playlist-tracks";
+    el.className = "fe-row fe-row--playlist-tracks fe-row--file-list";
     el.draggable = true;
     el.dataset.trackId = String(row.trackId);
     el.dataset.sourceListId = String(sourceListId);
     el.dataset.entityId = String(row.entityId);
     const path = row.path?.trim() ?? "";
     if (path) {
-      el.title = path;
+      el.dataset.trackPath = path;
     }
+    const displayTitle = (row.title?.trim() || row.filename?.trim() || (path
+      ? (path.split(/[/\\]/).pop() ?? "")
+      : "")) || "\u2014";
+    const ext = plTrackFileExt(path || null, row.filename ?? null);
+    const fullTitle = [row.artist?.trim(), row.title?.trim()]
+      .filter(Boolean)
+      .join(" \u2014 ");
+    el.title = [fullTitle, path || ""].filter(Boolean).join("\n");
+    const nameKey = displayTitle.toLowerCase();
+
+    el.dataset.sortOrder = String(aug.order);
+    el.dataset.sortNameLower = nameKey;
+    el.dataset.sortExt = ext;
+    el.dataset.sortDuration = "0";
+    el.dataset.sortRating = "0";
+    el.dataset.sortTagCount = "0";
+    el.dataset.sortTagsKey = "";
+    if (path) {
+      this.playlistFileSortMeta.set(path, {
+        durationMs: 0,
+        rating0to5: 0,
+        tagCount: 0,
+        tagsKey: "",
+      });
+    }
+
+    const orderCol = document.createElement("span");
+    orderCol.className = "fe-row__order";
+    orderCol.textContent = String(aug.order);
 
     const iconSpan = document.createElement("span");
     iconSpan.className = "fe-row__icon";
-    iconSpan.textContent = "🎵";
+    iconSpan.textContent = "\uD83C\uDFB5";
 
-    const titleSpan = document.createElement("span");
-    titleSpan.className = "fe-row__name";
-    titleSpan.textContent = row.title?.trim() || "—";
+    const nameCol = document.createElement("div");
+    nameCol.className = "fe-row__col fe-row__col--name";
+    const baseSpan = document.createElement("span");
+    baseSpan.className = "fe-row__basename";
+    baseSpan.textContent = displayTitle;
+    nameCol.appendChild(baseSpan);
 
-    const artistSpan = document.createElement("span");
-    artistSpan.className = "fe-row__size fe-row__size--playlist";
-    artistSpan.textContent = row.artist?.trim() || "—";
-
-    const fileSpan = document.createElement("span");
-    fileSpan.className = "fe-row__ext fe-row__ext--playlist";
-    const fn = row.filename?.trim();
-    fileSpan.textContent = fn || (path ? path.split(/[/\\]/).pop() ?? "" : "");
+    const tagsCol = document.createElement("div");
+    tagsCol.className = "fe-row__col fe-row__col--tags";
+    const activeTags = document.createElement("div");
+    activeTags.className = "fe-row__active-tags";
+    activeTags.setAttribute("aria-label", "");
+    tagsCol.appendChild(activeTags);
 
     const generalStars = document.createElement("span");
-    generalStars.className = "fe-row__general-stars fe-row__general-stars--playlist";
+    generalStars.className =
+      "fe-row__general-stars fe-row__col--rating";
     generalStars.setAttribute("aria-label", "Note");
-    const activeTags = document.createElement("span");
-    activeTags.className = "fe-row__active-tags fe-row__active-tags--playlist";
-    activeTags.setAttribute("aria-label", "");
 
-    const fileWrap = document.createElement("div");
-    fileWrap.className = "fe-row__file-with-stars";
-    fileWrap.append(fileSpan, generalStars, activeTags);
-
+    const durationSpan = document.createElement("span");
+    durationSpan.className = "fe-row__duration fe-row__col--duration";
+    durationSpan.setAttribute("aria-label", "Dur\u00e9e");
+    durationSpan.textContent = "";
     if (path) {
-      el.dataset.trackPath = path;
+      durationJobs.push({ el: durationSpan, path, row: el });
     }
 
-    el.append(iconSpan, titleSpan, artistSpan, fileWrap);
+    const extSpan = document.createElement("span");
+    extSpan.className = "fe-row__ext fe-row__col--ext";
+    extSpan.textContent = ext ? ext.toUpperCase() : "\u2014";
+
+    el.append(
+      orderCol,
+      iconSpan,
+      nameCol,
+      tagsCol,
+      generalStars,
+      durationSpan,
+      extSpan,
+    );
 
     if (path && isProfileScorableFilePath(path)) {
-      void this.loadRowProfileListMeta(generalStars, activeTags, path);
+      void this.loadRowProfileListMeta(el, generalStars, activeTags, path);
     }
 
     el.addEventListener("dragstart", (e) => {

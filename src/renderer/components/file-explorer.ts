@@ -12,8 +12,14 @@ import {
   isProfileScorableFilePath,
 } from "@shared/profile-stars";
 import { fillListRowActiveTagsContainer } from "../lib/fill-active-tags-row";
+import {
+  compareFolderListRows,
+  fileListSortTiebreakName,
+  type FileListFolderSortKey,
+} from "../lib/file-list-sort";
 import { formatDurationMmSsFromMs } from "@shared/format-duration";
 import { eventBus } from "../lib/event-bus";
+import { orderedActiveProfileTagIds } from "@shared/profile-stars";
 
 type PanelId = "left" | "right";
 
@@ -79,6 +85,18 @@ export class FileExplorer {
   private selectedEntries: Set<FileEntry> = new Set();
   private durationLoadGen = 0;
 
+  private sortKey: FileListFolderSortKey = "name";
+  private sortDir: 1 | -1 = 1;
+  private fileSortMeta = new Map<
+    string,
+    {
+      durationMs: number;
+      rating0to5: number;
+      tagCount: number;
+      tagsKey: string;
+    }
+  >();
+
   private treeEl!: HTMLElement;
   private contentEl!: HTMLElement;
   private pathInput!: HTMLInputElement;
@@ -100,6 +118,131 @@ export class FileExplorer {
     eventBus.on("profile-scores-updated", ({ filePath }) => {
       this.updateGeneralStarsForFilePath(filePath);
     });
+    this.initFolderListSort();
+  }
+
+  private initFolderListSort(): void {
+    this.contentEl.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+        "[data-fe-sort][data-fe-list=\"folder\"]",
+      );
+      if (!btn || !this.contentEl.contains(btn)) return;
+      e.preventDefault();
+      const key = btn.dataset.feSort as FileListFolderSortKey | undefined;
+      if (!key) return;
+      if (this.sortKey === key) {
+        this.sortDir = this.sortDir === 1 ? -1 : 1;
+      } else {
+        this.sortKey = key;
+        this.sortDir = 1;
+      }
+      this.syncFolderHeaderSortUi();
+      this.reorderFolderRows();
+    });
+  }
+
+  private buildFolderListHeader(): HTMLElement {
+    const h = document.createElement("div");
+    h.className = "fe-list-header fe-list-header--folder";
+    h.setAttribute("role", "row");
+    const icon = document.createElement("span");
+    icon.className = "fe-list-header__cell fe-list-header__cell--icon";
+    icon.setAttribute("aria-hidden", "true");
+    const mk = (sort: FileListFolderSortKey, label: string) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "fe-list-header__btn";
+      b.dataset.feList = "folder";
+      b.dataset.feSort = sort;
+      b.textContent = label;
+      return b;
+    };
+    h.append(
+      icon,
+      mk("name", "Nom"),
+      mk("tags", "Tags"),
+      mk("rating", "Note"),
+      mk("duration", "Dur\u00e9e"),
+      mk("ext", "Type"),
+    );
+    this.syncFolderHeaderSortUiOn(h);
+    return h;
+  }
+
+  private syncFolderHeaderSortUiOn(header: HTMLElement): void {
+    header.querySelectorAll<HTMLButtonElement>("[data-fe-sort]").forEach((b) => {
+      b.classList.remove("is-sorted", "is-sorted-desc");
+      b.removeAttribute("aria-pressed");
+      if (b.dataset.feSort === this.sortKey) {
+        b.classList.add("is-sorted");
+        if (this.sortDir === -1) b.classList.add("is-sorted-desc");
+        b.setAttribute("aria-pressed", "true");
+      }
+    });
+  }
+
+  private syncFolderHeaderSortUi(): void {
+    const h = this.contentEl.querySelector<HTMLElement>(".fe-list-header--folder");
+    if (h) this.syncFolderHeaderSortUiOn(h);
+  }
+
+  private reorderFolderRows(): void {
+    const header = this.contentEl.querySelector(".fe-list-header--folder");
+    const rows = [
+      ...this.contentEl.querySelectorAll<HTMLElement>(".fe-row"),
+    ];
+    if (rows.length === 0) return;
+    const key = this.sortKey;
+    const dir = this.sortDir;
+    rows.sort((a, b) => {
+      let c = compareFolderListRows(a, b, key, dir);
+      if (c === 0) c = fileListSortTiebreakName(a, b);
+      return c;
+    });
+    if (header) {
+      this.contentEl.replaceChildren(header, ...rows);
+    } else {
+      this.contentEl.replaceChildren(...rows);
+    }
+  }
+
+  private sortFileEntries(files: FileEntry[]): FileEntry[] {
+    const mult = this.sortDir;
+    const key = this.sortKey;
+    return [...files].sort((a, b) => {
+      const ma = this.fileSortMeta.get(a.path);
+      const mb = this.fileSortMeta.get(b.path);
+      let cmp = 0;
+      switch (key) {
+        case "name":
+          cmp = a.name.localeCompare(b.name, "fr", { sensitivity: "base" });
+          break;
+        case "ext":
+          cmp = a.extension.localeCompare(b.extension, "fr", {
+            sensitivity: "base",
+          });
+          break;
+        case "duration":
+          cmp = (ma?.durationMs ?? 0) - (mb?.durationMs ?? 0);
+          break;
+        case "rating":
+          cmp = (ma?.rating0to5 ?? 0) - (mb?.rating0to5 ?? 0);
+          break;
+        case "tags": {
+          const ca = ma?.tagCount ?? 0;
+          const cb = mb?.tagCount ?? 0;
+          cmp =
+            ca !== cb
+              ? ca - cb
+              : (ma?.tagsKey ?? "").localeCompare(mb?.tagsKey ?? "", "fr", {
+                  sensitivity: "base",
+                });
+          break;
+        }
+      }
+      if (cmp !== 0) return mult * cmp;
+      return a.name.localeCompare(b.name, "fr", { sensitivity: "base" });
+    });
   }
 
   private updateGeneralStarsForFilePath(filePath: string): void {
@@ -108,11 +251,12 @@ export class FileExplorer {
       if (!p || !audioPathsEqual(p, filePath)) continue;
       const stars = row.querySelector<HTMLElement>(".fe-row__general-stars");
       const tags = row.querySelector<HTMLElement>(".fe-row__active-tags");
-      if (stars && tags) void this.loadRowProfileListMeta(stars, tags, p);
+      if (stars && tags) void this.loadRowProfileListMeta(row, stars, tags, p);
     }
   }
 
   private async loadRowProfileListMeta(
+    row: HTMLElement,
     starsEl: HTMLElement,
     tagsEl: HTMLElement,
     filePath: string,
@@ -121,12 +265,43 @@ export class FileExplorer {
       starsEl.textContent = "";
       tagsEl.textContent = "";
       tagsEl.removeAttribute("aria-label");
+      row.dataset.sortRating = "0";
+      row.dataset.sortTagCount = "0";
+      row.dataset.sortTagsKey = "";
+      const prev = this.fileSortMeta.get(filePath) ?? {
+        durationMs: 0,
+        rating0to5: 0,
+        tagCount: 0,
+        tagsKey: "",
+      };
+      this.fileSortMeta.set(filePath, { ...prev, rating0to5: 0, tagCount: 0, tagsKey: "" });
+      if (["rating", "tags"].includes(this.sortKey)) this.reorderFolderRows();
       return;
     }
     try {
       const meta = await this.api.audio.getMetadata(filePath);
       starsEl.textContent = formatGeneralRowStars(meta.profileScores?.general);
       fillListRowActiveTagsContainer(tagsEl, meta.activeProfileTags);
+      const g = meta.profileScores?.general;
+      const rating0to5 =
+        g == null || !Number.isFinite(g)
+          ? 0
+          : Math.min(5, Math.max(0, Math.round(g / 20)));
+      const active = meta.activeProfileTags;
+      const ordered = orderedActiveProfileTagIds(active);
+      const tagsKey = ordered.join("\u0000");
+      row.dataset.sortRating = String(rating0to5);
+      row.dataset.sortTagCount = String(ordered.length);
+      row.dataset.sortTagsKey = tagsKey;
+      const durationMs = Number(row.dataset.sortDuration) || 0;
+      const base = this.fileSortMeta.get(filePath);
+      this.fileSortMeta.set(filePath, {
+        durationMs: base?.durationMs ?? durationMs,
+        rating0to5,
+        tagCount: ordered.length,
+        tagsKey,
+      });
+      if (["rating", "tags"].includes(this.sortKey)) this.reorderFolderRows();
     } catch {
       starsEl.textContent = "";
       tagsEl.textContent = "";
@@ -770,6 +945,7 @@ export class FileExplorer {
     this.loading = true;
     this.selectedEntries.clear();
     this.lastClickedIndex = -1;
+    this.fileSortMeta.clear();
     try {
       this.entries = await this.api.fs.readDirectory(dirPath);
       this.currentPath = dirPath;
@@ -793,6 +969,7 @@ export class FileExplorer {
 
   private renderContent(): void {
     this.contentEl.innerHTML = "";
+    this.contentEl.classList.remove("fe-content--list", "fe-content--list-folder");
     this.durationLoadGen += 1;
     const gen = this.durationLoadGen;
 
@@ -806,17 +983,23 @@ export class FileExplorer {
       return;
     }
 
-    const durationJobs: { el: HTMLElement; path: string }[] = [];
-    for (const entry of files) {
+    this.contentEl.classList.add("fe-content--list", "fe-content--list-folder");
+    this.contentEl.appendChild(this.buildFolderListHeader());
+
+    const sorted = this.sortFileEntries(files);
+    const durationJobs: { el: HTMLElement; path: string; row: HTMLElement }[] =
+      [];
+    for (const entry of sorted) {
       this.contentEl.appendChild(this.createFileRow(entry, durationJobs));
     }
     this.scheduleDurationLoads(gen, durationJobs);
+    this.syncFolderHeaderSortUi();
   }
 
   /** Lecture des durées en petits lots pour ne pas saturer l’IPC / le parseur audio. */
   private scheduleDurationLoads(
     gen: number,
-    jobs: { el: HTMLElement; path: string }[],
+    jobs: { el: HTMLElement; path: string; row: HTMLElement }[],
   ): void {
     if (jobs.length === 0) return;
     const batchSize = 4;
@@ -825,16 +1008,27 @@ export class FileExplorer {
         if (gen !== this.durationLoadGen) return;
         const slice = jobs.slice(i, i + batchSize);
         await Promise.all(
-          slice.map(async ({ el, path }) => {
+          slice.map(async ({ el, path, row }) => {
             if (gen !== this.durationLoadGen) return;
             try {
               const meta = await this.api.audio.getMetadata(path);
               if (gen !== this.durationLoadGen) return;
               const ms = meta.duration;
-              el.textContent =
+              const msN =
                 ms != null && ms > 0
-                  ? formatDurationMmSsFromMs(ms)
-                  : "\u2014";
+                  ? Math.round(ms)
+                  : 0;
+              el.textContent =
+                msN > 0 ? formatDurationMmSsFromMs(msN) : "\u2014";
+              row.dataset.sortDuration = String(msN);
+              const prev = this.fileSortMeta.get(path) ?? {
+                durationMs: 0,
+                rating0to5: 0,
+                tagCount: 0,
+                tagsKey: "",
+              };
+              this.fileSortMeta.set(path, { ...prev, durationMs: msN });
+              if (this.sortKey === "duration") this.reorderFolderRows();
             } catch {
               if (gen !== this.durationLoadGen) return;
               el.textContent = "\u2014";
@@ -847,45 +1041,72 @@ export class FileExplorer {
 
   private createFileRow(
     entry: FileEntry,
-    durationJobs?: { el: HTMLElement; path: string }[] | null,
+    durationJobs?: { el: HTMLElement; path: string; row: HTMLElement }[] | null,
   ): HTMLElement {
     const row = document.createElement("div");
-    row.className = "fe-row";
+    row.className = "fe-row fe-row--file-list";
     row.dataset.path = entry.path;
+    row.dataset.sortNameLower = entry.name.toLowerCase();
+    row.dataset.sortExt = entry.extension.toLowerCase();
+    row.dataset.sortDuration = "0";
+    row.dataset.sortRating = "0";
+    row.dataset.sortTagCount = "0";
+    row.dataset.sortTagsKey = "";
+    this.fileSortMeta.set(entry.path, {
+      durationMs: 0,
+      rating0to5: 0,
+      tagCount: 0,
+      tagsKey: "",
+    });
 
     const iconSpan = document.createElement("span");
     iconSpan.className = "fe-row__icon";
     iconSpan.textContent = "🎵";
 
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "fe-row__name fe-row__name--inline";
+    const nameCol = document.createElement("div");
+    nameCol.className = "fe-row__col fe-row__col--name";
     const baseSpan = document.createElement("span");
     baseSpan.className = "fe-row__basename";
     baseSpan.textContent = entry.name;
-    const generalStars = document.createElement("span");
-    generalStars.className = "fe-row__general-stars";
-    generalStars.setAttribute("aria-label", "Note");
-    const activeTags = document.createElement("span");
+    nameCol.appendChild(baseSpan);
+
+    const tagsCol = document.createElement("div");
+    tagsCol.className = "fe-row__col fe-row__col--tags";
+    const activeTags = document.createElement("div");
     activeTags.className = "fe-row__active-tags";
     activeTags.setAttribute("aria-label", "");
-    nameSpan.append(baseSpan, generalStars, activeTags);
+    tagsCol.appendChild(activeTags);
+
+    const generalStars = document.createElement("span");
+    generalStars.className = "fe-row__general-stars fe-row__col--rating";
+    generalStars.setAttribute("aria-label", "Note");
 
     const durationSpan = document.createElement("span");
-    durationSpan.className = "fe-row__duration";
+    durationSpan.className = "fe-row__duration fe-row__col--duration";
     durationSpan.setAttribute("aria-label", "Dur\u00e9e");
     durationSpan.textContent = "";
     if (durationJobs) {
-      durationJobs.push({ el: durationSpan, path: entry.path });
+      durationJobs.push({ el: durationSpan, path: entry.path, row });
     }
 
     const extSpan = document.createElement("span");
-    extSpan.className = "fe-row__ext";
-    extSpan.textContent = entry.extension.toUpperCase().slice(1);
+    extSpan.className = "fe-row__ext fe-row__col--ext";
+    extSpan.textContent = entry.extension
+      .replace(/^\./, "")
+      .toUpperCase()
+      .slice(0, 4);
 
-    row.append(iconSpan, nameSpan, durationSpan, extSpan);
+    row.append(
+      iconSpan,
+      nameCol,
+      tagsCol,
+      generalStars,
+      durationSpan,
+      extSpan,
+    );
 
     if (isProfileScorableFilePath(entry.path)) {
-      void this.loadRowProfileListMeta(generalStars, activeTags, entry.path);
+      void this.loadRowProfileListMeta(row, generalStars, activeTags, entry.path);
     }
 
     row.addEventListener("click", (e) => {
