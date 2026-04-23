@@ -21,4 +21,6 @@ export const STORE_KEYS = {
   LIBRARY_FOLDER: "libraryFolder",
   /** Chemin absolu vers la base SQLite du moteur DJ (ex. Rekordbox `m.db`). */
   ENGINE_DJ_DATABASE_PATH: "engineDjDatabasePath",
+  /** Tags profil proposés dans le lecteur (ordre = ordre d’affichage). */
+  PROFILE_TAGS_AVAILABLE: "profileTagsAvailable",
 } as const;

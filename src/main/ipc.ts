@@ -151,7 +151,8 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
       filePath: string,
       scores: ProfileScores,
       essentia?: EssentiaAnalysis,
-    ) => writeProfileScores(filePath, scores, essentia),
+      activeProfileTags?: string[],
+    ) => writeProfileScores(filePath, scores, essentia, activeProfileTags),
   );
 
   ipcMain.handle(IpcChannel.AUDIO_ESSENTIA_EXTRACT, (_, filePath: string) =>

@@ -11,6 +11,7 @@ import {
   formatGeneralRowStars,
   isProfileScorableFilePath,
 } from "@shared/profile-stars";
+import { formatDurationMmSsFromMs } from "@shared/format-duration";
 import { eventBus } from "../lib/event-bus";
 
 type PanelId = "left" | "right";
@@ -75,6 +76,7 @@ export class FileExplorer {
   private renameClickTimer: ReturnType<typeof setTimeout> | null = null;
   private lastClickedNodePath: string | null = null;
   private selectedEntries: Set<FileEntry> = new Set();
+  private durationLoadGen = 0;
 
   private treeEl!: HTMLElement;
   private contentEl!: HTMLElement;
@@ -783,6 +785,8 @@ export class FileExplorer {
 
   private renderContent(): void {
     this.contentEl.innerHTML = "";
+    this.durationLoadGen += 1;
+    const gen = this.durationLoadGen;
 
     const files = this.entries.filter((e) => !e.isDirectory);
 
@@ -794,12 +798,49 @@ export class FileExplorer {
       return;
     }
 
+    const durationJobs: { el: HTMLElement; path: string }[] = [];
     for (const entry of files) {
-      this.contentEl.appendChild(this.createFileRow(entry));
+      this.contentEl.appendChild(this.createFileRow(entry, durationJobs));
     }
+    this.scheduleDurationLoads(gen, durationJobs);
   }
 
-  private createFileRow(entry: FileEntry): HTMLElement {
+  /** Lecture des durées en petits lots pour ne pas saturer l’IPC / le parseur audio. */
+  private scheduleDurationLoads(
+    gen: number,
+    jobs: { el: HTMLElement; path: string }[],
+  ): void {
+    if (jobs.length === 0) return;
+    const batchSize = 4;
+    void (async () => {
+      for (let i = 0; i < jobs.length; i += batchSize) {
+        if (gen !== this.durationLoadGen) return;
+        const slice = jobs.slice(i, i + batchSize);
+        await Promise.all(
+          slice.map(async ({ el, path }) => {
+            if (gen !== this.durationLoadGen) return;
+            try {
+              const meta = await this.api.audio.getMetadata(path);
+              if (gen !== this.durationLoadGen) return;
+              const ms = meta.duration;
+              el.textContent =
+                ms != null && ms > 0
+                  ? formatDurationMmSsFromMs(ms)
+                  : "\u2014";
+            } catch {
+              if (gen !== this.durationLoadGen) return;
+              el.textContent = "\u2014";
+            }
+          }),
+        );
+      }
+    })();
+  }
+
+  private createFileRow(
+    entry: FileEntry,
+    durationJobs?: { el: HTMLElement; path: string }[] | null,
+  ): HTMLElement {
     const row = document.createElement("div");
     row.className = "fe-row";
     row.dataset.path = entry.path;
@@ -818,11 +859,19 @@ export class FileExplorer {
     generalStars.setAttribute("aria-label", "Note General");
     nameSpan.append(baseSpan, generalStars);
 
+    const durationSpan = document.createElement("span");
+    durationSpan.className = "fe-row__duration";
+    durationSpan.setAttribute("aria-label", "Dur\u00e9e");
+    durationSpan.textContent = "";
+    if (durationJobs) {
+      durationJobs.push({ el: durationSpan, path: entry.path });
+    }
+
     const extSpan = document.createElement("span");
     extSpan.className = "fe-row__ext";
     extSpan.textContent = entry.extension.toUpperCase().slice(1);
 
-    row.append(iconSpan, nameSpan, extSpan);
+    row.append(iconSpan, nameSpan, durationSpan, extSpan);
 
     if (isProfileScorableFilePath(entry.path)) {
       void this.loadRowGeneralStars(generalStars, entry.path);

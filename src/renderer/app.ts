@@ -1,5 +1,14 @@
 import type { ElectronApi, PanelState } from "@shared/types";
 import { STORE_KEYS } from "@shared/constants";
+import {
+  getProfileTagLabel,
+  resolveProfileTagIdFromUserInput,
+} from "@shared/profile-tag-labels";
+import { PROFILE_TAG_AXES } from "@shared/profile-scores";
+import {
+  loadProfileTagsAvailable,
+  normalizeProfileTagsAvailable,
+} from "@shared/profile-tags-settings";
 import { FileExplorer } from "./components/file-explorer";
 import { PlaylistsPanel } from "./components/playlists-panel";
 import { AudioPlayer } from "./components/audio-player";
@@ -57,17 +66,136 @@ export async function initApp(): Promise<void> {
     document.getElementById("panel-playlists")!,
   );
 
+  let profileTagsDraft: string[] = [];
+  const profileTagsListEl = document.getElementById("settings-profile-tags-list");
+  const profileTagAddInput = document.getElementById("settings-profile-tag-add") as
+    | HTMLInputElement
+    | null;
+  const profileTagAddError = document.getElementById("settings-profile-tag-add-error") as
+    | HTMLParagraphElement
+    | null;
+  const profileTagAddBtn = document.getElementById("btn-profile-tag-add") as
+    | HTMLButtonElement
+    | null;
+  const profileTagSuggestions = document.getElementById("settings-profile-tag-suggestions");
+  if (profileTagSuggestions && profileTagSuggestions.childElementCount === 0) {
+    for (const axis of PROFILE_TAG_AXES) {
+      const oLabel = document.createElement("option");
+      oLabel.value = getProfileTagLabel(axis);
+      profileTagSuggestions.appendChild(oLabel);
+      const oId = document.createElement("option");
+      oId.value = axis;
+      profileTagSuggestions.appendChild(oId);
+    }
+  }
+
+  const setProfileTagAddError = (message: string | null): void => {
+    if (!profileTagAddError) return;
+    if (message) {
+      profileTagAddError.textContent = message;
+      profileTagAddError.hidden = false;
+    } else {
+      profileTagAddError.textContent = "";
+      profileTagAddError.hidden = true;
+    }
+  };
+
+  const tryAddProfileTagFromInput = (): void => {
+    if (!profileTagAddInput || profileTagAddInput.disabled) return;
+    setProfileTagAddError(null);
+    const resolved = resolveProfileTagIdFromUserInput(profileTagAddInput.value);
+    if (resolved === undefined) {
+      setProfileTagAddError(
+        "Critère non reconnu : axe connu (ex. energy, Groove) ou tag personnalisé (ex. mon_vibe, 1–32 car. : a-z, 0-9, _).",
+      );
+      return;
+    }
+    if (profileTagsDraft.includes(resolved)) {
+      setProfileTagAddError("Ce critère est déjà dans la liste.");
+      return;
+    }
+    profileTagsDraft.push(resolved);
+    profileTagAddInput.value = "";
+    renderSettingsProfileTagsList();
+  };
+
+  const renderSettingsProfileTagsList = (): void => {
+    if (!profileTagsListEl) return;
+    profileTagsListEl.replaceChildren();
+    for (const axis of profileTagsDraft) {
+      const li = document.createElement("li");
+      li.className = "settings-profile-tag-row";
+      li.dataset.profileTag = axis;
+      const name = document.createElement("span");
+      name.className = "settings-profile-tag-name";
+      name.textContent = getProfileTagLabel(axis);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "settings-profile-tag-remove";
+      btn.dataset.profileTag = axis;
+      btn.title = "Retirer de la liste";
+      btn.setAttribute("aria-label", `Retirer ${getProfileTagLabel(axis)}`);
+      btn.textContent = "\u2715";
+      li.append(name, btn);
+      profileTagsListEl.appendChild(li);
+    }
+    if (profileTagAddInput && profileTagAddBtn) {
+      profileTagAddInput.disabled = false;
+      profileTagAddBtn.disabled = false;
+    }
+  };
+
+  profileTagsListEl?.addEventListener("click", (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      ".settings-profile-tag-remove",
+    );
+    if (!t?.dataset.profileTag) return;
+    const axis = t.dataset.profileTag;
+    if (!axis) return;
+    profileTagsDraft = profileTagsDraft.filter((a) => a !== axis);
+    renderSettingsProfileTagsList();
+  });
+
+  profileTagAddBtn?.addEventListener("click", () => {
+    tryAddProfileTagFromInput();
+  });
+
+  profileTagAddInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      tryAddProfileTagFromInput();
+    }
+  });
+
+  profileTagAddInput?.addEventListener("input", () => {
+    setProfileTagAddError(null);
+  });
+
   const openSettings = async () => {
-    const [savedKey, savedPrompt, savedLibrary, savedEngineDjDb] = await Promise.all([
+    const [
+      savedKey,
+      savedPrompt,
+      savedLibrary,
+      savedEngineDjDb,
+      savedProfileTags,
+    ] = await Promise.all([
       electronApi.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
       electronApi.store.get<string>(STORE_KEYS.GENRE_PROMPT),
       electronApi.store.get<string>(STORE_KEYS.LIBRARY_FOLDER),
       electronApi.store.get<string>(STORE_KEYS.ENGINE_DJ_DATABASE_PATH),
+      loadProfileTagsAvailable((key) => electronApi.store.get(key)),
     ]);
     openaiInput.value = savedKey ?? "";
     genrePromptInput.value = savedPrompt ?? "";
     libraryInput.value = savedLibrary ?? "";
     engineDjDbInput.value = savedEngineDjDb?.trim() || defaultEngineDjDb;
+    profileTagsDraft = [...savedProfileTags];
+    if (profileTagAddInput) {
+      profileTagAddInput.value = "";
+      profileTagAddInput.disabled = false;
+    }
+    setProfileTagAddError(null);
+    renderSettingsProfileTagsList();
     settingsOverlay.hidden = false;
   };
 
@@ -80,16 +208,27 @@ export async function initApp(): Promise<void> {
   const saveSettings = async () => {
     const newLibrary = libraryInput.value.trim();
     const engineDjDb = engineDjDbInput.value.trim() || defaultEngineDjDb;
+    const previousProfileTags = await loadProfileTagsAvailable((key) =>
+      electronApi.store.get(key),
+    );
+    const profileTagsToStore = normalizeProfileTagsAvailable(profileTagsDraft);
+    const profileTagsChanged =
+      previousProfileTags.length !== profileTagsToStore.length ||
+      previousProfileTags.some((a, i) => a !== profileTagsToStore[i]);
     await Promise.all([
       electronApi.store.set(STORE_KEYS.OPENAI_API_KEY, openaiInput.value.trim()),
       electronApi.store.set(STORE_KEYS.GENRE_PROMPT, genrePromptInput.value),
       electronApi.store.set(STORE_KEYS.LIBRARY_FOLDER, newLibrary),
       electronApi.store.set(STORE_KEYS.ENGINE_DJ_DATABASE_PATH, engineDjDb),
+      electronApi.store.set(STORE_KEYS.PROFILE_TAGS_AVAILABLE, profileTagsToStore),
     ]);
     if (rightPanel && newLibrary) {
       await rightPanel.setLockedRoot(newLibrary);
     }
     await playlistsPanel.reconnect();
+    if (profileTagsChanged) {
+      eventBus.emit("profile-tags-available-changed", {});
+    }
     closeSettings();
   };
 

@@ -26,6 +26,7 @@ export async function writeProfileScores(
   filePath: string,
   scores: ProfileScores,
   essentia?: EssentiaAnalysis,
+  activeProfileTags?: string[],
 ): Promise<void> {
   const ext = path.extname(filePath).toLowerCase();
   if (ext !== ".mp3" && ext !== ".flac") {
@@ -35,7 +36,7 @@ export async function writeProfileScores(
   }
 
   const normalized = normalizeProfileScores(scores);
-  const json = serializeProfileTag(normalized, essentia);
+  const json = serializeProfileTag(normalized, essentia, activeProfileTags);
   const fieldName = TRACKS_PROFILE_TXXX_DESCRIPTION;
 
   const file: ReturnType<typeof File.createFromPath> = File.createFromPath(

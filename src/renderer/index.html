@@ -19,6 +19,7 @@
         <div class="settings-main">
           <nav class="settings-tabs">
             <button class="settings-tab is-active" data-tab="general">Général</button>
+            <button class="settings-tab" data-tab="tags">Tags profil</button>
             <button class="settings-tab" data-tab="llm">LLM</button>
             <button class="settings-tab" data-tab="engine-dj">Engine DJ</button>
           </nav>
@@ -30,6 +31,29 @@
                   <input class="settings-input" id="input-library-folder" type="text" placeholder="Aucun dossier sélectionné" spellcheck="false" readonly />
                   <button class="dialog-btn dialog-btn--primary settings-browse" id="btn-browse-library">Parcourir</button>
                 </div>
+              </div>
+            </div>
+            <div class="settings-page" data-page="tags">
+              <p class="settings-hint">
+                Axes reconnus (ex. <code>groove</code>, <code>Groove</code>) ou <strong>tag personnalisé</strong> : minuscules, chiffres, tirets de soulignement, 1–32 car. (ex. <code>mon_mood</code>, <code>My Vibe</code>). Puis <strong>Ajouter</strong> ou <kbd>Entrée</kbd>. L’ordre = affichage. Liste vide enregistrée = 12 axes par défaut.
+              </p>
+              <ul class="settings-profile-tags-list" id="settings-profile-tags-list" aria-label="Tags profil affichés"></ul>
+              <div class="settings-field settings-profile-tags-add">
+                <label class="settings-label" for="settings-profile-tag-add">Ajouter un critère</label>
+                <div class="settings-profile-tags-add-row">
+                  <input
+                    class="settings-input"
+                    id="settings-profile-tag-add"
+                    type="text"
+                    spellcheck="false"
+                    list="settings-profile-tag-suggestions"
+                    placeholder="Identifiant ou nom (ex. energy, Energy, groove…)"
+                    autocomplete="off"
+                  />
+                  <button type="button" class="dialog-btn dialog-btn--primary" id="btn-profile-tag-add">Ajouter</button>
+                </div>
+                <p class="settings-field-error" id="settings-profile-tag-add-error" hidden></p>
+                <datalist id="settings-profile-tag-suggestions"></datalist>
               </div>
             </div>
             <div class="settings-page" data-page="engine-dj">

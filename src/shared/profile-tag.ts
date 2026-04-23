@@ -1,5 +1,11 @@
 import type { EssentiaAnalysis, ProfileScores } from "./types";
-import { defaultProfileScores, normalizeProfileScores } from "./profile-scores";
+import {
+  defaultProfileScores,
+  isProfileTagKey,
+  normalizeProfileScores,
+  profileScoresForPersistence,
+} from "./profile-scores";
+import { orderActiveTagIdsForStorage } from "./profile-tag-ids";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -13,7 +19,7 @@ const LEGACY_SCORE_KEYS = new Set([
   "softHard",
 ]);
 
-const NEW_SCORE_KEYS: (keyof ProfileScores)[] = [
+const NEW_SCORE_KEYS = [
   "general",
   "energy",
   "groove",
@@ -21,7 +27,13 @@ const NEW_SCORE_KEYS: (keyof ProfileScores)[] = [
   "dark",
   "hard",
   "happy",
-];
+  "emotion",
+  "jazzy",
+  "tribal",
+  "latin",
+  "acid",
+  "ambient",
+] as const;
 
 function hasLegacyScoreKeys(obj: Record<string, unknown>): boolean {
   for (const k of Object.keys(obj)) {
@@ -30,21 +42,21 @@ function hasLegacyScoreKeys(obj: Record<string, unknown>): boolean {
   return false;
 }
 
-function isValidCurrentScoresShape(
-  obj: Record<string, unknown>,
-): obj is Record<keyof ProfileScores, unknown> {
-  for (const k of NEW_SCORE_KEYS) {
-    if (!(k in obj)) return false;
-  }
+/** `general` obligatoire ; autres clés = 12 axes intégrés et/ou tags personnalisés (slug). */
+function isValidScoresObject(obj: Record<string, unknown>): boolean {
+  const g = obj.general;
+  const gNum =
+    typeof g === "number"
+      ? g
+      : typeof g === "string" && g.trim() !== ""
+        ? Number(g)
+        : NaN;
+  if (!Number.isFinite(gNum)) return false;
   for (const key of Object.keys(obj)) {
-    if (!NEW_SCORE_KEYS.includes(key as keyof ProfileScores)) {
-      if (key === "essentia") continue;
-      return false;
-    }
-  }
-  for (const k of NEW_SCORE_KEYS) {
-    const v = obj[k];
-    if (v === null || v === undefined) return false;
+    if (key === "general") continue;
+    const isBuiltIn = (NEW_SCORE_KEYS as readonly string[]).includes(key);
+    if (!isBuiltIn && !isProfileTagKey(key)) return false;
+    const v = obj[key];
     const n =
       typeof v === "number"
         ? v
@@ -54,6 +66,31 @@ function isValidCurrentScoresShape(
     if (!Number.isFinite(n)) return false;
   }
   return true;
+}
+
+function deriveActiveProfileTagsFromScores(scores: ProfileScores): string[] {
+  return Object.keys(scores)
+    .filter((k) => k !== "general" && isProfileTagKey(k) && (scores[k] ?? 0) > 0)
+    .filter((k, i, a) => a.indexOf(k) === i);
+}
+
+function parseActiveProfileTags(
+  root: Record<string, unknown>,
+  scores: ProfileScores,
+): string[] {
+  if ("activeProfileTags" in root) {
+    const raw = root.activeProfileTags;
+    if (Array.isArray(raw)) {
+      const out: string[] = [];
+      for (const t of raw) {
+        if (typeof t === "string" && isProfileTagKey(t) && !out.includes(t)) {
+          out.push(t);
+        }
+      }
+      return orderActiveTagIdsForStorage(out);
+    }
+  }
+  return orderActiveTagIdsForStorage(deriveActiveProfileTagsFromScores(scores));
 }
 
 function normalizeEssentia(raw: unknown): EssentiaAnalysis | undefined {
@@ -84,15 +121,22 @@ function normalizeEssentia(raw: unknown): EssentiaAnalysis | undefined {
 export function parseProfileTagJson(str: string): {
   scores: ProfileScores;
   essentia?: EssentiaAnalysis;
+  activeProfileTags: string[];
 } {
   const trimmed = str.trim();
   if (!trimmed) {
-    return { scores: defaultProfileScores() };
+    return {
+      scores: defaultProfileScores(),
+      activeProfileTags: [],
+    };
   }
   try {
     const parsed: unknown = JSON.parse(trimmed);
     if (!isRecord(parsed)) {
-      return { scores: defaultProfileScores() };
+      return {
+        scores: defaultProfileScores(),
+        activeProfileTags: [],
+      };
     }
 
     let scoresRaw: Record<string, unknown>;
@@ -106,38 +150,86 @@ export function parseProfileTagJson(str: string): {
     ) {
       scoresRaw = parsed;
     } else {
-      return { scores: defaultProfileScores() };
+      return {
+        scores: defaultProfileScores(),
+        activeProfileTags: parseActiveProfileTags(
+          parsed,
+          defaultProfileScores(),
+        ),
+      };
     }
 
     if (hasLegacyScoreKeys(scoresRaw)) {
       const essentia = normalizeEssentia(parsed.essentia);
       return essentia
-        ? { scores: defaultProfileScores(), essentia }
-        : { scores: defaultProfileScores() };
+        ? {
+            scores: defaultProfileScores(),
+            essentia,
+            activeProfileTags: parseActiveProfileTags(
+              parsed,
+              defaultProfileScores(),
+            ),
+          }
+        : {
+            scores: defaultProfileScores(),
+            activeProfileTags: parseActiveProfileTags(
+              parsed,
+              defaultProfileScores(),
+            ),
+          };
     }
 
-    if (!isValidCurrentScoresShape(scoresRaw)) {
+    if (!isValidScoresObject(scoresRaw)) {
       const essentia = normalizeEssentia(parsed.essentia);
       return essentia
-        ? { scores: defaultProfileScores(), essentia }
-        : { scores: defaultProfileScores() };
+        ? {
+            scores: defaultProfileScores(),
+            essentia,
+            activeProfileTags: parseActiveProfileTags(
+              parsed,
+              defaultProfileScores(),
+            ),
+          }
+        : {
+            scores: defaultProfileScores(),
+            activeProfileTags: parseActiveProfileTags(
+              parsed,
+              defaultProfileScores(),
+            ),
+          };
     }
 
-    const scores = normalizeProfileScores(
+    const scoresNorm = normalizeProfileScores(
       scoresRaw as unknown as Partial<ProfileScores>,
     );
+    const activeProfileTags = parseActiveProfileTags(parsed, scoresNorm);
+    const scores = profileScoresForPersistence(
+      scoresNorm,
+      scoresNorm.general,
+    );
     const essentia = normalizeEssentia(parsed.essentia);
-    return essentia ? { scores, essentia } : { scores };
+    return {
+      scores,
+      activeProfileTags,
+      ...(essentia ? { essentia } : {}),
+    };
   } catch {
-    return { scores: defaultProfileScores() };
+    return {
+      scores: defaultProfileScores(),
+      activeProfileTags: [],
+    };
   }
 }
 
 export function serializeProfileTag(
   scores: ProfileScores,
   essentia?: EssentiaAnalysis,
+  activeProfileTags?: string[],
 ): string {
   const payload: Record<string, unknown> = { scores };
+  if (activeProfileTags && activeProfileTags.length > 0) {
+    payload.activeProfileTags = activeProfileTags;
+  }
   if (essentia && (essentia.bpm !== undefined || essentia.key !== undefined)) {
     payload.essentia = {
       ...(essentia.bpm !== undefined ? { bpm: essentia.bpm } : {}),

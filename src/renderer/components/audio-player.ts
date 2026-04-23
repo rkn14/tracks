@@ -9,10 +9,19 @@ import type {
 import { eventBus } from "../lib/event-bus";
 import { STORE_KEYS } from "@shared/constants";
 import { isProfileScorableFilePath } from "@shared/profile-stars";
+import { getProfileTagLabel } from "@shared/profile-tag-labels";
+import {
+  collectTagIdUniverse,
+  orderActiveTagIdsForStorage,
+} from "@shared/profile-tag-ids";
+import { loadProfileTagsAvailable } from "@shared/profile-tags-settings";
 import {
   defaultProfileScores,
+  isProfileTagAxis,
+  isProfileTagKey,
   normalizeProfileScores,
-  profileScoreKeyList,
+  profileScoresForPersistence,
+  PROFILE_TAG_AXES,
 } from "@shared/profile-scores";
 import { formatDurationMmSsFromMs } from "@shared/format-duration";
 const MIME_BY_EXT: Record<string, string> = {
@@ -72,13 +81,20 @@ export class AudioPlayer {
   private profileSaveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Données Essentia persistées dans le TXXX (hors tags ID3 classiques). */
   private essentiaAnalysis: EssentiaAnalysis = {};
+  /** Tags affichés (axes intégrés + personnalisés), ordre = affichage. */
+  private availableProfileTagIds: string[] = [...PROFILE_TAG_AXES];
+  private profileLayoutInit!: Promise<void>;
+  /** Dernier état complet en mémoire (inclut les axes non affichés). */
+  private bufferedProfileScores: ProfileScores = defaultProfileScores();
+  private bufferedActiveTags: string[] = [];
 
   constructor(container: HTMLElement) {
     this.api = window.electronApi;
     this.el = container;
     this.render();
+    this.profileLayoutInit = this.hydrateProfileTagsLayout();
     this.bindEvents();
-    this.restoreVolume();
+    void this.restoreVolume();
   }
 
   private render(): void {
@@ -152,96 +168,29 @@ export class AudioPlayer {
             </div>
           </div>
           <div class="player__scores">
-            <div class="player__score-row player__score-row--general" data-score="general">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note General">
-                <span class="player__score-title">General</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+            <div class="player__scores-note">
+              <div class="player__scores-section-label">Note</div>
+              <div class="player__score-row player__score-row--general" data-score="general">
+                <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note g\u00e9n\u00e9rale, 0 \u00e0 5 \u00e9toiles">
+                  <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                  <div class="player__score-starline" role="presentation">
+                    <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                    <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                    <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                    <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                    <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                  </div>
                 </div>
               </div>
             </div>
-            <div class="player__score-row player__score-row--energy" data-score="energy">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Energy">
-                <span class="player__score-title">Energy</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
-                </div>
-              </div>
-            </div>
-            <div class="player__score-row player__score-row--groove" data-score="groove">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Groove">
-                <span class="player__score-title">Groove</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
-                </div>
-              </div>
-            </div>
-            <div class="player__score-row player__score-row--melodic" data-score="melodic">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Melodic">
-                <span class="player__score-title">Melodic</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
-                </div>
-              </div>
-            </div>
-            <div class="player__score-row player__score-row--dark" data-score="dark">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Dark">
-                <span class="player__score-title">Dark</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
-                </div>
-              </div>
-            </div>
-            <div class="player__score-row player__score-row--hard" data-score="hard">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Hard">
-                <span class="player__score-title">Hard</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
-                </div>
-              </div>
-            </div>
-            <div class="player__score-row player__score-row--happy" data-score="happy">
-              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Happy">
-                <span class="player__score-title">Happy</span>
-                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
-                <div class="player__score-starline" role="presentation">
-                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
-                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
-                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
-                </div>
-              </div>
+            <div class="player__scores-tags">
+              <div class="player__scores-section-label">Tags</div>
+              <div
+                class="player__profile-tag-toggles"
+                role="group"
+                aria-label="Crit\u00e8res optionnels"
+                data-profile-tag-toggles-mount
+              ></div>
             </div>
           </div>
           <canvas class="player__spectrum" width="0" height="0"></canvas>
@@ -275,9 +224,59 @@ export class AudioPlayer {
     this.essentiaKeyEl = this.el.querySelector("[data-essentia-key]")!;
     this.bottomRowEl = this.el.querySelector(".player__bottom-row")!;
     this.initScoreStars();
+    this.initProfileTagToggles();
     this.btnEssentiaAnalyze.addEventListener("click", () => void this.runEssentiaAnalyze());
 
     this.initEditableFields();
+  }
+
+  private mergeProfileUiIntoBuffer(): void {
+    this.bufferedProfileScores = this.readProfileScoresFromUi();
+    this.bufferedActiveTags = this.readActiveProfileTagsFromUi();
+  }
+
+  private buildTagTogglesInnerHtml(): string {
+    return this.availableProfileTagIds
+      .map((id) => {
+        const label = this.escapeProfileTagLabelHtml(getProfileTagLabel(id));
+        const mod = isProfileTagAxis(id)
+          ? ` player__tag-toggle--${id}`
+          : " player__tag-toggle--custom";
+        const eid = this.escapeProfileTagAttr(id);
+        return `<label class="player__tag-toggle${mod}"><input type="checkbox" class="player__tag-toggle-input" data-profile-tag-toggle="${eid}" /><span class="player__tag-toggle-pill">${label}</span></label>`;
+      })
+      .join("");
+  }
+
+  private escapeProfileTagAttr(s: string): string {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;");
+  }
+
+  private escapeProfileTagLabelHtml(s: string): string {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  private async hydrateProfileTagsLayout(): Promise<void> {
+    this.mergeProfileUiIntoBuffer();
+    this.availableProfileTagIds = await loadProfileTagsAvailable((key) =>
+      this.api.store.get(key),
+    );
+    const mountT = this.scoresEl.querySelector<HTMLElement>(
+      "[data-profile-tag-toggles-mount]",
+    );
+    if (!mountT) return;
+    mountT.innerHTML = this.buildTagTogglesInnerHtml();
+    this.applyProfileScoresToUi(this.bufferedProfileScores, this.bufferedActiveTags);
+  }
+
+  private async onProfileTagsAvailableChanged(): Promise<void> {
+    await this.hydrateProfileTagsLayout();
   }
 
   private syncProfileStarRow(container: HTMLElement, value0to100: number): void {
@@ -315,6 +314,40 @@ export class AudioPlayer {
     });
   }
 
+  private initProfileTagToggles(): void {
+    this.scoresEl.addEventListener("change", (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLInputElement)) return;
+      const id = t.getAttribute("data-profile-tag-toggle");
+      if (!id || !isProfileTagKey(id)) return;
+      this.scheduleProfileSave();
+    });
+  }
+
+  private readActiveProfileTagsFromUi(): string[] {
+    const fromUi: string[] = [];
+    for (const id of this.availableProfileTagIds) {
+      const cb = this.scoresEl.querySelector<HTMLInputElement>(
+        `input[data-profile-tag-toggle="${CSS.escape(id)}"]`,
+      );
+      if (cb?.checked) fromUi.push(id);
+    }
+    const universe = collectTagIdUniverse(
+      this.availableProfileTagIds,
+      Object.keys(this.bufferedProfileScores),
+      this.bufferedActiveTags,
+    );
+    const hidden = new Set(
+      [...universe].filter((x) => !this.availableProfileTagIds.includes(x)),
+    );
+    for (const id of this.bufferedActiveTags) {
+      if (hidden.has(id) && !fromUi.includes(id)) {
+        fromUi.push(id);
+      }
+    }
+    return orderActiveTagIdsForStorage(fromUi);
+  }
+
   private applyEssentiaToUi(): void {
     this.essentiaBpmEl.textContent =
       this.essentiaAnalysis.bpm !== undefined
@@ -350,6 +383,7 @@ export class AudioPlayer {
         path,
         this.readProfileScoresFromUi(),
         this.essentiaSnapshotForWrite(),
+        this.readActiveProfileTagsFromUi(),
       );
       this.emitProfileScoresUpdated(path);
     } catch (err) {
@@ -379,24 +413,41 @@ export class AudioPlayer {
     this.bottomRowEl.classList.toggle("player__bottom-row--no-scores", !visible);
   }
 
-  private applyProfileScoresToUi(scores: ProfileScores): void {
-    for (const key of profileScoreKeyList) {
-      const row = this.scoresEl.querySelector<HTMLElement>(`[data-score="${key}"]`);
-      const container = row?.querySelector<HTMLElement>("[data-score-stars]");
-      if (container) {
-        this.syncProfileStarRow(container, scores[key]);
-      }
+  private applyProfileScoresToUi(
+    scores: ProfileScores,
+    activeProfileTags: string[],
+  ): void {
+    this.bufferedProfileScores = normalizeProfileScores(scores);
+    this.bufferedActiveTags = orderActiveTagIdsForStorage(
+      activeProfileTags.filter((id) => id !== "general" && isProfileTagKey(id)),
+    );
+    const generalRow = this.scoresEl.querySelector<HTMLElement>(
+      "[data-score=\"general\"] [data-score-stars]",
+    );
+    if (generalRow) {
+      this.syncProfileStarRow(
+        generalRow,
+        this.bufferedProfileScores.general ?? 0,
+      );
+    }
+    for (const id of this.availableProfileTagIds) {
+      const on = this.bufferedActiveTags.includes(id);
+      const cb = this.scoresEl.querySelector<HTMLInputElement>(
+        `input[data-profile-tag-toggle="${CSS.escape(id)}"]`,
+      );
+      if (cb) cb.checked = on;
     }
   }
 
   private readProfileScoresFromUi(): ProfileScores {
-    const raw: Partial<ProfileScores> = {};
-    for (const key of profileScoreKeyList) {
-      const row = this.scoresEl.querySelector<HTMLElement>(`[data-score="${key}"]`);
-      const c = row?.querySelector<HTMLElement>("[data-score-stars]");
-      raw[key] = c != null ? parseInt(c.dataset.value ?? "0", 10) : 0;
-    }
-    return normalizeProfileScores(raw);
+    const gRow = this.scoresEl.querySelector<HTMLElement>(
+      "[data-score=\"general\"] [data-score-stars]",
+    );
+    const g =
+      gRow != null
+        ? parseInt(gRow.dataset.value ?? "0", 10)
+        : (this.bufferedProfileScores.general ?? 0);
+    return profileScoresForPersistence(this.bufferedProfileScores, g);
   }
 
   private scheduleProfileSave(): void {
@@ -411,6 +462,7 @@ export class AudioPlayer {
           path,
           this.readProfileScoresFromUi(),
           this.essentiaSnapshotForWrite(),
+          this.readActiveProfileTagsFromUi(),
         );
         this.emitProfileScoresUpdated(path);
       } catch (err) {
@@ -497,6 +549,9 @@ export class AudioPlayer {
     });
 
     eventBus.on("play-file", ({ filePath }) => this.load(filePath));
+    eventBus.on("profile-tags-available-changed", () => {
+      void this.onProfileTagsAvailableChanged();
+    });
   }
 
   private async restoreVolume(): Promise<void> {
@@ -521,6 +576,7 @@ export class AudioPlayer {
             previousPath,
             this.readProfileScoresFromUi(),
             this.essentiaSnapshotForWrite(),
+            this.readActiveProfileTagsFromUi(),
           );
           this.emitProfileScoresUpdated(previousPath);
         } catch (err) {
@@ -590,6 +646,7 @@ export class AudioPlayer {
   }
 
   private async loadMetadata(filePath: string): Promise<void> {
+    await this.profileLayoutInit;
     const fileName = filePath.split(/[/\\]/).pop() ?? "";
     try {
       const meta: AudioMetadata =
@@ -624,10 +681,15 @@ export class AudioPlayer {
 
       const profileable = /\.(mp3|flac)$/i.test(filePath);
       this.setProfileUiVisible(profileable);
+      const tagFilter = (t: string): boolean =>
+        t !== "general" && isProfileTagKey(t);
       this.applyProfileScoresToUi(
         profileable
           ? normalizeProfileScores(meta.profileScores)
           : defaultProfileScores(),
+        profileable
+          ? (meta.activeProfileTags?.filter(tagFilter) ?? [])
+          : [],
       );
       if (profileable) {
         this.essentiaAnalysis = { ...meta.essentiaAnalysis };
@@ -647,7 +709,7 @@ export class AudioPlayer {
       this.qualityEl.textContent = "";
       this.coverImg.style.display = "none";
       this.setProfileUiVisible(/\.(mp3|flac)$/i.test(filePath));
-      this.applyProfileScoresToUi(defaultProfileScores());
+      this.applyProfileScoresToUi(defaultProfileScores(), []);
       this.essentiaAnalysis = {};
       this.applyEssentiaToUi();
     }

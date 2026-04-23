@@ -58,12 +58,13 @@ const electronApi: ElectronApi = {
       ipcRenderer.invoke(IpcChannel.AUDIO_WRITE_GENRES, dirPath, genres),
     writeMetadata: (filePath, meta) =>
       ipcRenderer.invoke(IpcChannel.AUDIO_WRITE_METADATA, filePath, meta),
-    writeProfileScores: (filePath, scores, essentia) =>
+    writeProfileScores: (filePath, scores, essentia, activeProfileTags) =>
       ipcRenderer.invoke(
         IpcChannel.AUDIO_WRITE_PROFILE_SCORES,
         filePath,
         scores,
         essentia,
+        activeProfileTags,
       ),
     extractEssentia: (filePath) =>
       ipcRenderer.invoke(IpcChannel.AUDIO_ESSENTIA_EXTRACT, filePath),

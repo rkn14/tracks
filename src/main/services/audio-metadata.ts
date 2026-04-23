@@ -1,5 +1,9 @@
 import { parseFile } from "music-metadata";
-import type { AudioMetadata, EssentiaAnalysis, ProfileScores } from "@shared/types";
+import type {
+  AudioMetadata,
+  EssentiaAnalysis,
+  ProfileScores,
+} from "@shared/types";
 import { TRACKS_PROFILE_TXXX_DESCRIPTION } from "@shared/constants";
 import { parseProfileTagJson } from "@shared/profile-tag";
 
@@ -34,7 +38,13 @@ function valueToJsonString(raw: unknown): string {
 
 function parseProfileTagFromNative(
   native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
-): { scores: ProfileScores; essentia?: EssentiaAnalysis } | undefined {
+):
+  | {
+      scores: ProfileScores;
+      essentia?: EssentiaAnalysis;
+      activeProfileTags: string[];
+    }
+  | undefined {
   if (!native) return undefined;
   for (const tagType of Object.keys(native)) {
     for (const tag of native[tagType] ?? []) {
@@ -82,6 +92,7 @@ export async function getAudioMetadata(
     channels: format.numberOfChannels,
     lossless: format.lossless,
     profileScores: profileTag?.scores,
+    activeProfileTags: profileTag?.activeProfileTags,
     essentiaAnalysis: profileTag?.essentia,
   };
 }

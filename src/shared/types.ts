@@ -87,18 +87,29 @@ export type AudioExtension = (typeof AUDIO_EXTENSIONS)[number];
 // ── Audio metadata ─────────────────────────────
 
 /**
- * Notation profil (7 axes). Valeurs 0–100 par pas de 20 (0, 20, 40, 60, 80, 100), défaut 0.
+ * Notation profil. Seule la clé `general` est une note 0–100 (étoiles).
+ * Les autres clés (axes + tags perso) restent à 0 en persistance : la présence des tags
+ * est portée par `activeProfileTags` (on/off), pas par un score par tag.
  * Stocké en JSON (ID3 TXXX ou Vorbis) sous la clé `tracks.app/profileScores`.
  */
-export interface ProfileScores {
+export type ProfileScores = {
   general: number;
-  energy: number;
-  groove: number;
-  melodic: number;
-  dark: number;
-  hard: number;
-  happy: number;
-}
+} & { [tagKey: string]: number };
+
+/** Axes de notation activables en tags (hors `general`). */
+export type ProfileTagAxis =
+  | "energy"
+  | "groove"
+  | "melodic"
+  | "dark"
+  | "hard"
+  | "happy"
+  | "emotion"
+  | "jazzy"
+  | "tribal"
+  | "latin"
+  | "acid"
+  | "ambient";
 
 /** Analyse locale (Essentia), stockée dans le même TXXX que les scores, clé `essentia`. */
 export interface EssentiaAnalysis {
@@ -125,6 +136,8 @@ export interface AudioMetadata {
   channels?: number;
   lossless?: boolean;
   profileScores?: ProfileScores;
+  /** Tags de critères activés (axes intégrés et/ou tags personnalisés). */
+  activeProfileTags?: string[];
   /** Données Essentia persistées dans le TXXX custom (pas les tags BPM/key ID3). */
   essentiaAnalysis?: EssentiaAnalysis;
 }
@@ -291,6 +304,7 @@ export interface ElectronApi {
       filePath: string,
       scores: ProfileScores,
       essentia?: EssentiaAnalysis,
+      activeProfileTags?: string[],
     ) => Promise<void>;
     extractEssentia: (
       filePath: string,

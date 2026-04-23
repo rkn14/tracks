@@ -7,6 +7,8 @@ export type EventMap = {
   "library-files-drag-end": Record<string, never>;
   /** Notes profil (general) mises à jour sur le disque : rafraîchir les listes. */
   "profile-scores-updated": { filePath: string };
+  /** Liste des tags disponibles (paramètres) modifiée. */
+  "profile-tags-available-changed": Record<string, never>;
 };
 
 type Handler<T> = (data: T) => void;
