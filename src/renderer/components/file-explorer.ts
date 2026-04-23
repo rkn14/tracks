@@ -20,6 +20,10 @@ import {
 import { formatDurationMmSsFromMs } from "@shared/format-duration";
 import { eventBus } from "../lib/event-bus";
 import { orderedActiveProfileTagIds } from "@shared/profile-stars";
+import {
+  isPathExcludedFromLibrary,
+  libraryExcludeKeysForCompare,
+} from "@shared/library-exclude-paths";
 
 type PanelId = "left" | "right";
 
@@ -77,6 +81,8 @@ export class FileExplorer {
   private volumes: Volume[] = [];
   private loading = false;
   private lockedRoot: string | null = null;
+  /** Clés normalisées ; panneau Library (droite) uniquement. */
+  private libraryExcludeKeys: string[] = [];
 
   private treeRoots: TreeNode[] = [];
   private selectedNode: TreeNode | null = null;
@@ -613,6 +619,17 @@ export class FileExplorer {
     return this.currentPath;
   }
 
+  /** Dossiers absolus à masquer dans ce panneau (Library) et sous-arborescences. */
+  setLibraryExcludePaths(paths: string[]): void {
+    this.libraryExcludeKeys = libraryExcludeKeysForCompare(paths);
+  }
+
+  private shouldHideLibraryEntryPath(absPath: string): boolean {
+    if (this.panelId !== "right" || !this.lockedRoot) return false;
+    if (this.libraryExcludeKeys.length === 0) return false;
+    return isPathExcludedFromLibrary(absPath, this.libraryExcludeKeys);
+  }
+
   async setLockedRoot(rootPath: string): Promise<void> {
     this.lockedRoot = rootPath || null;
     this.pathInput.readOnly = !!this.lockedRoot;
@@ -692,6 +709,7 @@ export class FileExplorer {
       const entries = await this.api.fs.readDirectory(node.path);
       node.children = entries
         .filter((e) => e.isDirectory)
+        .filter((e) => !this.shouldHideLibraryEntryPath(e.path))
         .map((e) => ({
           name: e.name,
           path: e.path,
@@ -947,7 +965,10 @@ export class FileExplorer {
     this.lastClickedIndex = -1;
     this.fileSortMeta.clear();
     try {
-      this.entries = await this.api.fs.readDirectory(dirPath);
+      const rawEntries = await this.api.fs.readDirectory(dirPath);
+      this.entries = rawEntries.filter(
+        (e) => !this.shouldHideLibraryEntryPath(e.path),
+      );
       this.currentPath = dirPath;
       this.pathInput.value = dirPath;
       this.el.dataset.currentPath = dirPath;
@@ -1384,6 +1405,13 @@ export class FileExplorer {
     const out: string[] = [];
 
     const walk = async (dir: string): Promise<void> => {
+      if (
+        this.panelId === "right" &&
+        this.libraryExcludeKeys.length > 0 &&
+        isPathExcludedFromLibrary(feNormalizeDir(dir), this.libraryExcludeKeys)
+      ) {
+        return;
+      }
       const entries = await this.api.fs.readDirectory(dir);
       for (const e of entries) {
         if (e.isDirectory) {

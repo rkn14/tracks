@@ -42,6 +42,7 @@ import {
   djDbGetPlaylistTree,
   djDbRemoveTrackFromPlaylist,
   djDbReorderPlaylistTracks,
+  djDbAnalyzeLibraryVsPlaylists,
 } from "./services/engine-dj-db";
 
 export function registerIpcHandlers(ipcMain: IpcMain): void {
@@ -223,5 +224,9 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     IpcChannel.ENGINE_DJ_DB_ADD_LIBRARY_FILES_TO_PLAYLIST,
     (_, params: DjAddLibraryFilesToPlaylistParams) =>
       djDbAddLibraryFilesToPlaylist(params.destListId, params.filePaths),
+  );
+
+  ipcMain.handle(IpcChannel.ENGINE_DJ_DB_ANALYZE_LIBRARY_PLAYLISTS, () =>
+    djDbAnalyzeLibraryVsPlaylists(),
   );
 }

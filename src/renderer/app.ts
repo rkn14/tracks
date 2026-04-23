@@ -18,6 +18,10 @@ import { FileExplorer } from "./components/file-explorer";
 import { PlaylistsPanel } from "./components/playlists-panel";
 import { AudioPlayer } from "./components/audio-player";
 import { eventBus } from "./lib/event-bus";
+import {
+  normalizeLibraryExcludePaths,
+  parseStoredLibraryExcludePaths,
+} from "@shared/library-exclude-paths";
 declare global {
   interface Window {
     electronApi: ElectronApi;
@@ -73,6 +77,7 @@ export async function initApp(): Promise<void> {
 
   let profileTagsDraft: string[] = [];
   let profileTagColorsDraft: Record<string, string> = {};
+  let libraryExcludeDraft: string[] = [];
   const profileTagsListEl = document.getElementById("settings-profile-tags-list");
   const profileTagAddInput = document.getElementById("settings-profile-tag-add") as
     | HTMLInputElement
@@ -83,6 +88,13 @@ export async function initApp(): Promise<void> {
   const profileTagAddBtn = document.getElementById("btn-profile-tag-add") as
     | HTMLButtonElement
     | null;
+  const libraryExcludeListEl = document.getElementById("settings-library-exclude-list");
+  const libraryExcludeInput = document.getElementById("settings-library-exclude-input") as
+    | HTMLInputElement
+    | null;
+  const libraryExcludeBrowseBtn = document.getElementById("btn-library-exclude-browse");
+  const libraryExcludeAddBtn = document.getElementById("btn-library-exclude-add");
+
   const profileTagSuggestions = document.getElementById("settings-profile-tag-suggestions");
   if (profileTagSuggestions && profileTagSuggestions.childElementCount === 0) {
     for (const axis of PROFILE_TAG_AXES) {
@@ -160,6 +172,74 @@ export async function initApp(): Promise<void> {
     }
   };
 
+  const renderSettingsLibraryExcludeList = (): void => {
+    if (!libraryExcludeListEl) return;
+    libraryExcludeListEl.replaceChildren();
+    for (let i = 0; i < libraryExcludeDraft.length; i++) {
+      const p = libraryExcludeDraft[i]!;
+      const li = document.createElement("li");
+      li.className = "settings-profile-tag-row";
+      const name = document.createElement("span");
+      name.className = "settings-profile-tag-name";
+      name.textContent = p;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "settings-profile-tag-remove";
+      btn.dataset.libraryExcludeIndex = String(i);
+      btn.title = "Retirer";
+      btn.setAttribute("aria-label", `Retirer ${p}`);
+      btn.textContent = "\u2715";
+      li.append(name, btn);
+      libraryExcludeListEl.appendChild(li);
+    }
+  };
+
+  const tryAddLibraryExcludeFromInput = (): void => {
+    if (!libraryExcludeInput) return;
+    const t = libraryExcludeInput.value.trim();
+    if (!t) return;
+    const before = libraryExcludeDraft.length;
+    libraryExcludeDraft = normalizeLibraryExcludePaths([
+      ...libraryExcludeDraft,
+      t,
+    ]);
+    if (libraryExcludeDraft.length === before) {
+      libraryExcludeInput.value = "";
+      return;
+    }
+    libraryExcludeInput.value = "";
+    renderSettingsLibraryExcludeList();
+  };
+
+  libraryExcludeListEl?.addEventListener("click", (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      ".settings-profile-tag-remove",
+    );
+    if (!t?.dataset.libraryExcludeIndex) return;
+    const idx = parseInt(t.dataset.libraryExcludeIndex, 10);
+    if (Number.isNaN(idx) || idx < 0) return;
+    libraryExcludeDraft.splice(idx, 1);
+    renderSettingsLibraryExcludeList();
+  });
+
+  libraryExcludeBrowseBtn?.addEventListener("click", async () => {
+    const folder = await electronApi.dialog.selectFolder(
+      "Dossier à exclure du panneau Library",
+    );
+    if (folder && libraryExcludeInput) libraryExcludeInput.value = folder;
+  });
+
+  libraryExcludeAddBtn?.addEventListener("click", () => {
+    tryAddLibraryExcludeFromInput();
+  });
+
+  libraryExcludeInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      tryAddLibraryExcludeFromInput();
+    }
+  });
+
   profileTagsListEl?.addEventListener("input", (e) => {
     const t = e.target;
     if (
@@ -210,6 +290,7 @@ export async function initApp(): Promise<void> {
       savedEngineDjDb,
       savedProfileTags,
       rawTagColors,
+      rawLibraryExclude,
     ] = await Promise.all([
       electronApi.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
       electronApi.store.get<string>(STORE_KEYS.GENRE_PROMPT),
@@ -217,11 +298,15 @@ export async function initApp(): Promise<void> {
       electronApi.store.get<string>(STORE_KEYS.ENGINE_DJ_DATABASE_PATH),
       loadProfileTagsAvailable((key) => electronApi.store.get(key)),
       electronApi.store.get<Record<string, string>>(STORE_KEYS.PROFILE_TAG_COLORS),
+      electronApi.store.get(STORE_KEYS.LIBRARY_EXCLUDE_PATHS),
     ]);
     openaiInput.value = savedKey ?? "";
     genrePromptInput.value = savedPrompt ?? "";
     libraryInput.value = savedLibrary ?? "";
     engineDjDbInput.value = savedEngineDjDb?.trim() || defaultEngineDjDb;
+    libraryExcludeDraft = parseStoredLibraryExcludePaths(rawLibraryExclude);
+    renderSettingsLibraryExcludeList();
+    if (libraryExcludeInput) libraryExcludeInput.value = "";
     profileTagsDraft = [...savedProfileTags];
     profileTagColorsDraft = mergeProfileTagColorsWithDefaults(
       rawTagColors,
@@ -256,6 +341,7 @@ export async function initApp(): Promise<void> {
     const profileTagsChanged =
       previousProfileTags.length !== profileTagsToStore.length ||
       previousProfileTags.some((a, i) => a !== profileTagsToStore[i]);
+    const libExcludeToStore = normalizeLibraryExcludePaths(libraryExcludeDraft);
     await Promise.all([
       electronApi.store.set(STORE_KEYS.OPENAI_API_KEY, openaiInput.value.trim()),
       electronApi.store.set(STORE_KEYS.GENRE_PROMPT, genrePromptInput.value),
@@ -263,10 +349,15 @@ export async function initApp(): Promise<void> {
       electronApi.store.set(STORE_KEYS.ENGINE_DJ_DATABASE_PATH, engineDjDb),
       electronApi.store.set(STORE_KEYS.PROFILE_TAGS_AVAILABLE, profileTagsToStore),
       electronApi.store.set(STORE_KEYS.PROFILE_TAG_COLORS, tagColorsToStore),
+      electronApi.store.set(STORE_KEYS.LIBRARY_EXCLUDE_PATHS, libExcludeToStore),
     ]);
     await loadAndApplyProfileTagTheme((key) => electronApi.store.get(key));
     if (rightPanel && newLibrary) {
       await rightPanel.setLockedRoot(newLibrary);
+    }
+    if (rightPanel) {
+      rightPanel.setLibraryExcludePaths(libExcludeToStore);
+      await rightPanel.refresh();
     }
     await playlistsPanel.reconnect();
     if (profileTagsChanged) {
@@ -306,12 +397,11 @@ export async function initApp(): Promise<void> {
   });
 
   // ── Restore saved state ──────────────────────
-  const leftState = await electronApi.store.get<PanelState>(
-    STORE_KEYS.LEFT_PANEL,
-  );
-  const savedLibrary = await electronApi.store.get<string>(
-    STORE_KEYS.LIBRARY_FOLDER,
-  );
+  const [leftState, savedLibrary, rawLibraryExcludePaths] = await Promise.all([
+    electronApi.store.get<PanelState>(STORE_KEYS.LEFT_PANEL),
+    electronApi.store.get<string>(STORE_KEYS.LIBRARY_FOLDER),
+    electronApi.store.get(STORE_KEYS.LIBRARY_EXCLUDE_PATHS),
+  ]);
 
   await loadAndApplyProfileTagTheme((key) => electronApi.store.get(key));
 
@@ -323,6 +413,9 @@ export async function initApp(): Promise<void> {
   rightPanel = new FileExplorer(
     document.getElementById("panel-right")!,
     "right",
+  );
+  rightPanel.setLibraryExcludePaths(
+    parseStoredLibraryExcludePaths(rawLibraryExcludePaths),
   );
 
   await leftPanel.init(leftState?.currentPath);
@@ -337,6 +430,34 @@ export async function initApp(): Promise<void> {
   eventBus.on("refresh-panel", ({ panelId }) => {
     if (panelId === "left") leftPanel.refresh();
     else rightPanel.refresh();
+  });
+
+  // ── Analyse provisoire Library ↔ playlists (Engine DJ) ──
+  const libraryAnalyzeBtn = document.getElementById("btn-library-analyze");
+  const libraryAnalyzeOverlay = document.getElementById("library-analyze-overlay");
+  const libraryAnalyzeText = document.getElementById("library-analyze-text");
+  const closeLibraryAnalyze = (): void => {
+    libraryAnalyzeOverlay?.setAttribute("hidden", "");
+  };
+  document.getElementById("library-analyze-close")?.addEventListener("click", closeLibraryAnalyze);
+  libraryAnalyzeOverlay?.addEventListener("click", (e) => {
+    if (e.target === libraryAnalyzeOverlay) closeLibraryAnalyze();
+  });
+  libraryAnalyzeOverlay?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeLibraryAnalyze();
+  });
+  libraryAnalyzeBtn?.addEventListener("click", async () => {
+    libraryAnalyzeBtn.setAttribute("disabled", "");
+    try {
+      const r = await electronApi.engineDj.analyzeLibraryPlaylists();
+      if (libraryAnalyzeText) {
+        libraryAnalyzeText.textContent = r.lines.join("\n");
+      }
+      libraryAnalyzeOverlay?.removeAttribute("hidden");
+      libraryAnalyzeOverlay?.focus();
+    } finally {
+      libraryAnalyzeBtn.removeAttribute("disabled");
+    }
   });
 
   // ── Audio player ─────────────────────────────

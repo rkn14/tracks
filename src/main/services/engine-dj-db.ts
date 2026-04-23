@@ -8,11 +8,18 @@ import type {
   DjAddPlaylistResult,
   DjAddTrackToPlaylistResult,
   DjDbConnectResult,
+  LibraryPlaylistAnalysisResult,
   DjPlaylistNode,
   DjPlaylistTrackMutationResult,
   DjPlaylistTrackRow,
 } from "@shared/types";
+import { listFolderAudio } from "./filesystem";
 import { storeGet } from "./store";
+import {
+  isPathExcludedFromLibrary,
+  libraryExcludeKeysForCompare,
+  parseStoredLibraryExcludePaths,
+} from "@shared/library-exclude-paths";
 
 type SqliteDatabase = InstanceType<typeof Database>;
 
@@ -751,5 +758,280 @@ export async function djDbAddLibraryFilesToPlaylist(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, added: 0, failures: [], error: msg };
+  }
+}
+
+/**
+ * Collecte chaque nœud playlist avec une clé = chaîne de titres depuis la racine
+ * (même principe que le script `doc/Add New Tracks.py` : un dossier = un titre de playlist).
+ */
+function collectPlaylistPathEntries(
+  nodes: DjPlaylistNode[],
+  parentParts: string[] = [],
+): { listId: number; pathKey: string; labelPath: string }[] {
+  const out: { listId: number; pathKey: string; labelPath: string }[] = [];
+  for (const n of nodes) {
+    const title = (n.title?.trim() || "(sans titre)").replace(/\s+/g, " ");
+    const parts = [...parentParts, title];
+    const pathKey = parts.map((p) => p.toLowerCase()).join("/");
+    out.push({ listId: n.id, pathKey, labelPath: parts.join(" / ") });
+    out.push(...collectPlaylistPathEntries(n.children, parts));
+  }
+  return out;
+}
+
+type LibraryFolderRow = { relKey: string; absPath: string; filePaths: string[] };
+
+/** Parcours des dossiers sous la Library (hors racine) avec fichiers audio par dossier. */
+async function walkLibraryAudioTree(
+  libraryRootAbs: string,
+  out: LibraryFolderRow[],
+  excludeKeys: string[],
+): Promise<void> {
+  let top;
+  try {
+    top = await fs.readdir(libraryRootAbs, { withFileTypes: true });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Lecture du dossier Library : ${msg}`);
+  }
+  const sorted = top.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+  for (const ent of sorted) {
+    if (!ent.isDirectory()) continue;
+    const childAbs = path.join(libraryRootAbs, ent.name);
+    if (excludeKeys.length && isPathExcludedFromLibrary(childAbs, excludeKeys)) {
+      continue;
+    }
+    await walkLibraryDir(childAbs, [ent.name], out, excludeKeys);
+  }
+}
+
+async function walkLibraryDir(
+  absPath: string,
+  relSegments: string[],
+  out: LibraryFolderRow[],
+  excludeKeys: string[],
+): Promise<void> {
+  if (excludeKeys.length && isPathExcludedFromLibrary(absPath, excludeKeys)) {
+    return;
+  }
+  const relKey = relSegments.map((s) => s.toLowerCase()).join("/");
+  const audio = await listFolderAudio(absPath);
+  out.push({
+    relKey,
+    absPath: absPath,
+    filePaths: audio.map((a) => a.path),
+  });
+  let sub;
+  try {
+    sub = await fs.readdir(absPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of sub.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  )) {
+    if (!ent.isDirectory()) continue;
+    const childAbs = path.join(absPath, ent.name);
+    if (excludeKeys.length && isPathExcludedFromLibrary(childAbs, excludeKeys)) {
+      continue;
+    }
+    await walkLibraryDir(
+      childAbs,
+      [...relSegments, ent.name],
+      out,
+      excludeKeys,
+    );
+  }
+}
+
+function getTrackIdsInPlaylist(
+  d: SqliteDatabase,
+  listId: number,
+  cache: Map<number, Set<number>>,
+): Set<number> {
+  let s = cache.get(listId);
+  if (s) return s;
+  const rows = d
+    .prepare("SELECT trackId FROM PlaylistEntity WHERE listId = ?")
+    .all(listId) as { trackId: number }[];
+  s = new Set(rows.map((r) => r.trackId));
+  cache.set(listId, s);
+  return s;
+}
+
+/**
+ * La **Library est la référence** : on signale d’abord les **playlists manquantes**
+ * en base (dossier présent sur disque, pas de playlist de même chemin de titres).
+ * Ensuite : pistes pour les seuls dossiers appariés.
+ */
+export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAnalysisResult> {
+  const lines: string[] = [];
+  const libraryRoot = (await storeGet<string>(STORE_KEYS.LIBRARY_FOLDER))?.trim() ?? "";
+  const dbPathSetting =
+    (await storeGet<string>(STORE_KEYS.ENGINE_DJ_DATABASE_PATH))?.trim() ?? "";
+  const rawLibExclude = await storeGet<unknown>(STORE_KEYS.LIBRARY_EXCLUDE_PATHS);
+  const libExcludeList = parseStoredLibraryExcludePaths(rawLibExclude);
+  const libExcludeKeys = libraryExcludeKeysForCompare(libExcludeList);
+
+  if (!libraryRoot) {
+    const err = "Dossier Library non configuré (Paramètres).";
+    return { ok: false, error: err, lines: [err] };
+  }
+
+  const conn = await djDbConnectFromStore();
+  if (!conn.ok) {
+    const e = conn.error ?? "connexion impossible";
+    lines.push(`Base Engine DJ : ${e}`);
+    lines.push(`Chemin : ${conn.path}`);
+    return { ok: false, error: e, lines };
+  }
+
+  try {
+    const d = requireDb();
+    const tree = djDbGetPlaylistTree();
+    const plEntries = collectPlaylistPathEntries(tree);
+    const playlistByPath = new Map<
+      string,
+      { listId: number; labelPath: string }
+    >();
+    for (const e of plEntries) {
+      if (playlistByPath.has(e.pathKey)) {
+        const prev = playlistByPath.get(e.pathKey)!;
+        lines.push(
+          `⚠ Même clé d’arborescence pour deux playlists : « ${e.pathKey} » (listId ${prev.listId} et ${e.listId})`,
+        );
+        continue;
+      }
+      playlistByPath.set(e.pathKey, { listId: e.listId, labelPath: e.labelPath });
+    }
+
+    const folders: LibraryFolderRow[] = [];
+    try {
+      await walkLibraryAudioTree(
+        path.resolve(libraryRoot),
+        folders,
+        libExcludeKeys,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: msg, lines: [msg] };
+    }
+
+    lines.push("=== Analyse : Library = référence → playlists Engine DJ ===");
+    lines.push(
+      "Pour chaque dossier sous le dossier Library, la base doit contenir une playlist",
+    );
+    lines.push("dont la chaîne de titres reprend le chemin (segments = noms de dossiers).");
+    lines.push(`Dossier Library : ${path.resolve(libraryRoot)}`);
+    if (libExcludeList.length) {
+      lines.push(
+        `Dossiers exclus (Paramètres) : ${libExcludeList.length} chemin(s) — non parcourus pour cette analyse.`,
+      );
+    }
+    lines.push(
+      `Base (paramètre) : ${dbPathSetting || conn.path} — ouverte : ${conn.path}`,
+    );
+    lines.push("");
+    lines.push("— Playlists manquantes (par rapport à l’arborescence Library) —");
+
+    const dirWithoutPl: { relKey: string; absPath: string; fileCount: number }[] =
+      [];
+    for (const f of folders) {
+      if (!playlistByPath.has(f.relKey)) {
+        dirWithoutPl.push({
+          relKey: f.relKey,
+          absPath: f.absPath,
+          fileCount: f.filePaths.length,
+        });
+      }
+    }
+    dirWithoutPl.sort((a, b) => a.relKey.localeCompare(b.relKey, "fr"));
+    const totalAudioInMissingPlFolders = dirWithoutPl.reduce(
+      (s, x) => s + x.fileCount,
+      0,
+    );
+    if (dirWithoutPl.length) {
+      lines.push(
+        `À créer ou renommer en base : ${dirWithoutPl.length} playlist(s) manquante(s) pour le(s) dossier(s) :`,
+      );
+      for (const x of dirWithoutPl) {
+        const n =
+          x.fileCount > 0
+            ? `  (${x.fileCount} fichier(s) audio dans ce dossier)`
+            : "";
+        lines.push(`  ${x.absPath}${n}`);
+      }
+      if (totalAudioInMissingPlFolders) {
+        lines.push(
+          `  → ${totalAudioInMissingPlFolders} fichier(s) audio non rattaché(s) à une playlist (tant que celle-ci n’existe pas).`,
+        );
+      }
+      lines.push("");
+    } else {
+      lines.push("Aucune playlist manquante : chaque dossier Library a une entrée en base.");
+      lines.push("");
+    }
+
+    lines.push(
+      `Compte : ${plEntries.length} playlist(s) dans l’arbre en base, ${folders.length} dossier(s) parcouru(s) sur disque.`,
+    );
+    lines.push("");
+
+    lines.push(
+      "— Pistes (vérification Track + entrée playlist, dossiers déjà appariés uniquement) —",
+    );
+    const trackCache = new Map<number, Set<number>>();
+    let missingDb = 0;
+    let missingInList = 0;
+    let okTracks = 0;
+
+    for (const row of folders) {
+      const pl = playlistByPath.get(row.relKey);
+      if (!pl) continue;
+      if (row.filePaths.length === 0) continue;
+      for (const filePath of row.filePaths) {
+        const trackId = findTrackIdForLibraryFile(d, libraryRoot, filePath);
+        if (trackId == null) {
+          missingDb += 1;
+          lines.push(
+            `  Pas de piste en base (Track) : ${filePath}  [playlist listId ${pl.listId}]`,
+          );
+          continue;
+        }
+        const inList = getTrackIdsInPlaylist(
+          d,
+          pl.listId,
+          trackCache,
+        ).has(trackId);
+        if (!inList) {
+          missingInList += 1;
+          lines.push(
+            `  Piste en base mais pas dans la playlist : ${filePath}  (trackId ${trackId}, listId ${pl.listId})`,
+          );
+        } else {
+          okTracks += 1;
+        }
+      }
+    }
+
+    if (missingDb === 0 && missingInList === 0) {
+      lines.push(
+        `Aucun écart sur les pistes (fichiers vérifiés : ${okTracks}).`,
+      );
+    } else {
+      lines.push("");
+      lines.push(
+        `Résumé : ${okTracks} OK | ${missingDb} absent(s) de la base | ${missingInList} absent(s) de la playlist`,
+      );
+    }
+
+    return { ok: true, lines };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    lines.push(msg);
+    return { ok: false, error: msg, lines };
   }
 }

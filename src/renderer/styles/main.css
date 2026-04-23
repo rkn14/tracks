@@ -310,6 +310,18 @@ select {
   color: #e94560;
 }
 
+.settings-field--library-exclude {
+  margin-top: 18px;
+}
+
+.settings-hint--tight {
+  margin-bottom: 8px;
+}
+
+.settings-library-exclude-list {
+  margin-bottom: 8px;
+}
+
 .settings-profile-tags-list {
   list-style: none;
   margin: 0;
@@ -449,6 +461,11 @@ select {
 }
 
 /* Libellé unique (panneau droit « Library ») — aligné visuellement sur l’onglet actif */
+.panel-tabs--library {
+  align-items: center;
+  gap: 4px;
+}
+
 .panel-tabs__static {
   display: inline-block;
   padding: 6px 16px;
@@ -462,6 +479,103 @@ select {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   user-select: none;
+}
+
+/* Bouton provisoire : analyse Library ↔ playlists */
+.panel-tabs__dev-analyze {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.panel-tabs__dev-analyze:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.panel-tabs__dev-analyze:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+/* Popup provisoire — rapport d’analyse.
+   Ne pas mettre display:flex sur la base : ça écrase `hidden` (display:none) et l’overlay reste visible. */
+.dev-analyze-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.dev-analyze-overlay:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dev-analyze-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: min(920px, 100%);
+  max-height: min(80vh, 100%);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.dev-analyze-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dev-analyze-dialog__close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dev-analyze-dialog__close:hover {
+  color: var(--color-text);
+  background: var(--color-surface-alt);
+}
+
+.dev-analyze-dialog__body {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
 }
 
 .panel-tab-page {

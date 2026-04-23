@@ -49,6 +49,9 @@ export const IpcChannel = {
     "engine-dj-db:reorder-playlist-tracks",
   ENGINE_DJ_DB_ADD_LIBRARY_FILES_TO_PLAYLIST:
     "engine-dj-db:add-library-files-to-playlist",
+  /** Comparaison arborescence Library ↔ playlists (dev / diagnostic). */
+  ENGINE_DJ_DB_ANALYZE_LIBRARY_PLAYLISTS:
+    "engine-dj-db:analyze-library-playlists",
 } as const;
 
 export type IpcChannelValue =
@@ -257,6 +260,13 @@ export interface DjAddLibraryFilesToPlaylistResult {
   error?: string;
 }
 
+/** Rapport texte : Library vs arborescence playlists Engine DJ (chemins = titres comme le script « Add New Tracks »). */
+export interface LibraryPlaylistAnalysisResult {
+  ok: boolean;
+  error?: string;
+  lines: string[];
+}
+
 export interface AppState {
   leftPanel: PanelState;
   rightPanel: PanelState;
@@ -340,5 +350,7 @@ export interface ElectronApi {
     addLibraryFilesToPlaylist: (
       params: DjAddLibraryFilesToPlaylistParams,
     ) => Promise<DjAddLibraryFilesToPlaylistResult>;
+    /** Analyse provisoire : dossiers Library vs titres de playlists, présence des pistes. */
+    analyzeLibraryPlaylists: () => Promise<LibraryPlaylistAnalysisResult>;
   };
 }

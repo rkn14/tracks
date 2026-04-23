@@ -32,6 +32,25 @@
                   <button class="dialog-btn dialog-btn--primary settings-browse" id="btn-browse-library">Parcourir</button>
                 </div>
               </div>
+              <div class="settings-field settings-field--library-exclude">
+                <label class="settings-label" for="settings-library-exclude-input">Dossiers exclus (Library)</label>
+                <p class="settings-hint settings-hint--tight">
+                  Chemins absolus de dossiers à masquer dans le panneau Library et à ignorer dans l’analyse Library / playlists. Un chemin exclut tout son sous-arbre.
+                </p>
+                <ul class="settings-profile-tags-list settings-library-exclude-list" id="settings-library-exclude-list" aria-label="Dossiers exclus"></ul>
+                <div class="settings-profile-tags-add-row">
+                  <input
+                    class="settings-input"
+                    id="settings-library-exclude-input"
+                    type="text"
+                    spellcheck="false"
+                    placeholder="Ex. D:\Audio\Archives"
+                    autocomplete="off"
+                  />
+                  <button type="button" class="dialog-btn" id="btn-library-exclude-browse">Parcourir</button>
+                  <button type="button" class="dialog-btn dialog-btn--primary" id="btn-library-exclude-add">Ajouter</button>
+                </div>
+              </div>
             </div>
             <div class="settings-page" data-page="tags">
               <p class="settings-hint">
@@ -103,8 +122,19 @@
         </div>
         <div class="panel-divider"></div>
         <div class="panel panel--tabbed">
-          <nav class="panel-tabs panel-tabs--single" aria-label="Library">
+          <nav
+            class="panel-tabs panel-tabs--single panel-tabs--library"
+            aria-label="Library"
+          >
             <span class="panel-tabs__static" aria-current="true">Library</span>
+            <button
+              type="button"
+              class="panel-tabs__dev-analyze"
+              id="btn-library-analyze"
+              title="SYNC : analyse Library vs playlists (Engine DJ)"
+            >
+              SYNC
+            </button>
           </nav>
           <div
             class="panel-tab-page is-active"
@@ -115,6 +145,37 @@
       </div>
 
       <div class="player-section" id="player-section"></div>
+
+      <div
+        class="dev-analyze-overlay"
+        id="library-analyze-overlay"
+        hidden
+        tabindex="-1"
+      >
+        <div
+          class="dev-analyze-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="library-analyze-title"
+        >
+          <div class="dev-analyze-dialog__head">
+            <span id="library-analyze-title">Analyse Library ↔ playlists</span>
+            <button
+              type="button"
+              class="dev-analyze-dialog__close"
+              id="library-analyze-close"
+              aria-label="Fermer"
+            >
+              ×
+            </button>
+          </div>
+          <pre
+            class="dev-analyze-dialog__body"
+            id="library-analyze-text"
+            tabindex="0"
+          ></pre>
+        </div>
+      </div>
     </div>
     <script type="module" src="./index.ts"></script>
   </body>

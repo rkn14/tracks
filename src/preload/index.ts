@@ -107,6 +107,8 @@ const electronApi: ElectronApi = {
         IpcChannel.ENGINE_DJ_DB_ADD_LIBRARY_FILES_TO_PLAYLIST,
         params,
       ),
+    analyzeLibraryPlaylists: () =>
+      ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_ANALYZE_LIBRARY_PLAYLISTS),
   },
 };
 

@@ -19,6 +19,11 @@ export const STORE_KEYS = {
   OPENAI_API_KEY: "openaiApiKey",
   GENRE_PROMPT: "genrePrompt",
   LIBRARY_FOLDER: "libraryFolder",
+  /**
+   * Chemins absolus de dossiers à masquer dans le panneau Library et à exclure
+   * de l’analyse Library / playlists (tableau de chaînes JSON).
+   */
+  LIBRARY_EXCLUDE_PATHS: "libraryExcludePaths",
   /** Chemin absolu vers la base SQLite du moteur DJ (ex. Rekordbox `m.db`). */
   ENGINE_DJ_DATABASE_PATH: "engineDjDatabasePath",
   /** Tags profil proposés dans le lecteur (ordre = ordre d’affichage). */
