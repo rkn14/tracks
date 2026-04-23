@@ -323,7 +323,7 @@ select {
 .settings-profile-tag-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid var(--color-border);
@@ -332,8 +332,21 @@ select {
 }
 
 .settings-profile-tag-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   color: var(--color-text);
+}
+
+.settings-profile-tag-color {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-alt);
+  cursor: pointer;
 }
 
 .settings-profile-tag-remove {
@@ -943,6 +956,66 @@ button.fe-tree-item.dj-pl-tree-leaf {
   flex: 0 0 auto;
 }
 
+/* Tags profil actifs (liste dossier / playlist) : toujours une seule ligne */
+.fe-row__active-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(16rem, 55%);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  user-select: none;
+}
+
+.fe-row__active-tags:empty {
+  display: none;
+}
+
+.fe-row__active-tags--playlist {
+  max-width: min(14rem, 45%);
+  justify-content: flex-end;
+}
+
+/* Rond, une lettre (libellé complet en title / tooltip) ; --pt = var(--profile-tag-color-<id>) */
+.fe-row__active-tag {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  vertical-align: middle;
+  flex-shrink: 0;
+  cursor: default;
+  color: #fff;
+  background: linear-gradient(
+    145deg,
+    var(--pt, #a78bfa),
+    color-mix(in srgb, var(--pt, #a78bfa) 72%, #000)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--pt, #a78bfa) 52%,
+    color-mix(in srgb, var(--pt, #a78bfa) 70%, #000)
+  );
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+    0 0 12px color-mix(in srgb, var(--pt, #a78bfa) 40%, transparent);
+  text-shadow: 0 0 4px color-mix(in srgb, #fff 24%, var(--pt, #a78bfa));
+}
+
 .fe-row__size {
   text-align: right;
   font-size: 11px;
@@ -1215,214 +1288,29 @@ button.fe-tree-item.dj-pl-tree-leaf {
     text-shadow 0.16s ease;
 }
 
-/* Éteint = sombre / peu contrasté */
-.player__tag-toggle--energy .player__tag-toggle-pill {
-  color: rgba(253, 186, 116, 0.42);
-  background: color-mix(in srgb, #fb923c 10%, #1a1a22);
-  border-color: color-mix(in srgb, #fb923c 18%, transparent);
+/* --pt vient de style sur chaque <label> (var(--profile-tag-color-<id>)). */
+.player__tag-toggle .player__tag-toggle-pill {
+  color: color-mix(in srgb, var(--pt, #a78bfa) 44%, transparent);
+  background: color-mix(in srgb, var(--pt, #a78bfa) 9%, #1a1a22);
+  border-color: color-mix(in srgb, var(--pt, #a78bfa) 16%, transparent);
 }
 
-/* Allumé = brillant */
-.player__tag-toggle--energy:has(:checked) .player__tag-toggle-pill {
+.player__tag-toggle:has(:checked) .player__tag-toggle-pill {
   color: #fff;
-  background: linear-gradient(145deg, #fb923c, #ea580c);
-  border-color: color-mix(in srgb, #fdba74 60%, #ea580c);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.12) inset,
-    0 0 18px color-mix(in srgb, #fb923c 55%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 35%, #fb923c);
-}
-
-.player__tag-toggle--groove .player__tag-toggle-pill {
-  color: rgba(52, 211, 153, 0.4);
-  background: color-mix(in srgb, #4ade80 9%, #1a1a22);
-  border-color: color-mix(in srgb, #4ade80 16%, transparent);
-}
-
-.player__tag-toggle--groove:has(:checked) .player__tag-toggle-pill {
-  color: #ecfdf5;
-  background: linear-gradient(145deg, #4ade80, #16a34a);
-  border-color: color-mix(in srgb, #86efac 55%, #16a34a);
+  background: linear-gradient(
+    145deg,
+    var(--pt, #a78bfa),
+    color-mix(in srgb, var(--pt, #a78bfa) 72%, #000)
+  );
+  border-color: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--pt, #a78bfa) 55%, #fff) 55%,
+    color-mix(in srgb, var(--pt, #a78bfa) 72%, #000)
+  );
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #4ade80 50%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 30%, #4ade80);
-}
-
-.player__tag-toggle--melodic .player__tag-toggle-pill {
-  color: rgba(147, 197, 253, 0.45);
-  background: color-mix(in srgb, #60a5fa 9%, #1a1a22);
-  border-color: color-mix(in srgb, #60a5fa 16%, transparent);
-}
-
-.player__tag-toggle--melodic:has(:checked) .player__tag-toggle-pill {
-  color: #eff6ff;
-  background: linear-gradient(145deg, #60a5fa, #2563eb);
-  border-color: color-mix(in srgb, #93c5fd 50%, #2563eb);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #60a5fa 50%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 30%, #60a5fa);
-}
-
-.player__tag-toggle--dark .player__tag-toggle-pill {
-  color: rgba(148, 163, 184, 0.4);
-  background: color-mix(in srgb, #94a3b8 8%, #1a1a22);
-  border-color: color-mix(in srgb, #94a3b8 16%, transparent);
-}
-
-.player__tag-toggle--dark:has(:checked) .player__tag-toggle-pill {
-  color: #f8fafc;
-  background: linear-gradient(145deg, #94a3b8, #475569);
-  border-color: color-mix(in srgb, #cbd5e1 45%, #475569);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 16px color-mix(in srgb, #cbd5e1 35%, transparent);
-  text-shadow: 0 0 6px color-mix(in srgb, #fff 25%, #94a3b8);
-}
-
-.player__tag-toggle--hard .player__tag-toggle-pill {
-  color: rgba(244, 114, 182, 0.4);
-  background: color-mix(in srgb, #f472b6 8%, #1a1a22);
-  border-color: color-mix(in srgb, #f472b6 15%, transparent);
-}
-
-.player__tag-toggle--hard:has(:checked) .player__tag-toggle-pill {
-  color: #fdf2f8;
-  background: linear-gradient(145deg, #f472b6, #db2777);
-  border-color: color-mix(in srgb, #f9a8d4 50%, #db2777);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #f472b6 50%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 28%, #f472b6);
-}
-
-.player__tag-toggle--happy .player__tag-toggle-pill {
-  color: rgba(103, 232, 249, 0.42);
-  background: color-mix(in srgb, #22d3ee 8%, #1a1a22);
-  border-color: color-mix(in srgb, #22d3ee 15%, transparent);
-}
-
-.player__tag-toggle--happy:has(:checked) .player__tag-toggle-pill {
-  color: #ecfeff;
-  background: linear-gradient(145deg, #22d3ee, #0891b2);
-  border-color: color-mix(in srgb, #67e8f9 50%, #0891b2);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #22d3ee 48%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 28%, #22d3ee);
-}
-
-.player__tag-toggle--emotion .player__tag-toggle-pill {
-  color: rgba(232, 121, 249, 0.44);
-  background: color-mix(in srgb, #e879f9 9%, #1a1a22);
-  border-color: color-mix(in srgb, #e879f9 16%, transparent);
-}
-
-.player__tag-toggle--emotion:has(:checked) .player__tag-toggle-pill {
-  color: #fdf4ff;
-  background: linear-gradient(145deg, #e879f9, #c026d3);
-  border-color: color-mix(in srgb, #f0abfc 50%, #c026d3);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #e879f9 52%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 26%, #e879f9);
-}
-
-.player__tag-toggle--jazzy .player__tag-toggle-pill {
-  color: rgba(251, 191, 36, 0.44);
-  background: color-mix(in srgb, #f59e0b 9%, #1a1a22);
-  border-color: color-mix(in srgb, #f59e0b 16%, transparent);
-}
-
-.player__tag-toggle--jazzy:has(:checked) .player__tag-toggle-pill {
-  color: #fffbeb;
-  background: linear-gradient(145deg, #fbbf24, #d97706);
-  border-color: color-mix(in srgb, #fcd34d 48%, #d97706);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #f59e0b 48%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 26%, #f59e0b);
-}
-
-.player__tag-toggle--tribal .player__tag-toggle-pill {
-  color: rgba(212, 165, 116, 0.45);
-  background: color-mix(in srgb, #d4a574 9%, #1a1a22);
-  border-color: color-mix(in srgb, #d4a574 16%, transparent);
-}
-
-.player__tag-toggle--tribal:has(:checked) .player__tag-toggle-pill {
-  color: #fff7ed;
-  background: linear-gradient(145deg, #d4a574, #9a3412);
-  border-color: color-mix(in srgb, #e7c3a0 45%, #9a3412);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 16px color-mix(in srgb, #d4a574 40%, transparent);
-  text-shadow: 0 0 6px color-mix(in srgb, #fff 22%, #d4a574);
-}
-
-.player__tag-toggle--latin .player__tag-toggle-pill {
-  color: rgba(251, 113, 133, 0.44);
-  background: color-mix(in srgb, #f43f5e 8%, #1a1a22);
-  border-color: color-mix(in srgb, #f43f5e 15%, transparent);
-}
-
-.player__tag-toggle--latin:has(:checked) .player__tag-toggle-pill {
-  color: #fff1f2;
-  background: linear-gradient(145deg, #fb7185, #e11d48);
-  border-color: color-mix(in srgb, #fda4af 48%, #e11d48);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #f43f5e 48%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 26%, #fb7185);
-}
-
-.player__tag-toggle--acid .player__tag-toggle-pill {
-  color: rgba(190, 242, 100, 0.42);
-  background: color-mix(in srgb, #bef264 8%, #1a1a22);
-  border-color: color-mix(in srgb, #bef264 14%, transparent);
-}
-
-.player__tag-toggle--acid:has(:checked) .player__tag-toggle-pill {
-  color: #f7fee7;
-  background: linear-gradient(145deg, #bef264, #65a30d);
-  border-color: color-mix(in srgb, #d9f99d 50%, #65a30d);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 20px color-mix(in srgb, #bef264 55%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 28%, #bef264);
-}
-
-.player__tag-toggle--ambient .player__tag-toggle-pill {
-  color: rgba(147, 197, 253, 0.45);
-  background: color-mix(in srgb, #93c5fd 8%, #1a1a22);
-  border-color: color-mix(in srgb, #93c5fd 15%, transparent);
-}
-
-.player__tag-toggle--ambient:has(:checked) .player__tag-toggle-pill {
-  color: #eff6ff;
-  background: linear-gradient(145deg, #93c5fd, #3b82f6);
-  border-color: color-mix(in srgb, #bfdbfe 50%, #3b82f6);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #93c5fd 45%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 26%, #93c5fd);
-}
-
-.player__tag-toggle--custom .player__tag-toggle-pill {
-  color: rgba(196, 181, 253, 0.45);
-  background: color-mix(in srgb, #a78bfa 8%, #1a1a22);
-  border-color: color-mix(in srgb, #a78bfa 16%, transparent);
-}
-
-.player__tag-toggle--custom:has(:checked) .player__tag-toggle-pill {
-  color: #f5f3ff;
-  background: linear-gradient(145deg, #a78bfa, #7c3aed);
-  border-color: color-mix(in srgb, #c4b5fd 50%, #7c3aed);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-    0 0 18px color-mix(in srgb, #a78bfa 40%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, #fff 24%, #a78bfa);
+    0 0 18px color-mix(in srgb, var(--pt, #a78bfa) 48%, transparent);
+  text-shadow: 0 0 8px color-mix(in srgb, #fff 28%, var(--pt, #a78bfa));
 }
 
 /* Focus clavier (accessibilité) */

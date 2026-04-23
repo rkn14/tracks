@@ -23,4 +23,6 @@ export const STORE_KEYS = {
   ENGINE_DJ_DATABASE_PATH: "engineDjDatabasePath",
   /** Tags profil proposés dans le lecteur (ordre = ordre d’affichage). */
   PROFILE_TAGS_AVAILABLE: "profileTagsAvailable",
+  /** Couleur d’accent par id de tag (hex #rrggbb). */
+  PROFILE_TAG_COLORS: "profileTagColors",
 } as const;

@@ -4,6 +4,7 @@ import {
   formatGeneralRowStars,
   isProfileScorableFilePath,
 } from "@shared/profile-stars";
+import { fillListRowActiveTagsContainer } from "../lib/fill-active-tags-row";
 import { contextMenu, type ContextMenuEntry } from "./context-menu";
 import { showAlert, showConfirm, showPrompt } from "./dialogs";
 import { eventBus } from "../lib/event-bus";
@@ -168,23 +169,30 @@ export class PlaylistsPanel {
       const p = row.dataset.trackPath?.trim() ?? "";
       if (!p || !audioPathsEqual(p, filePath)) continue;
       const stars = row.querySelector<HTMLElement>(".fe-row__general-stars");
-      if (stars) void this.loadRowGeneralStars(stars, p);
+      const tags = row.querySelector<HTMLElement>(".fe-row__active-tags");
+      if (stars && tags) void this.loadRowProfileListMeta(stars, tags, p);
     }
   }
 
-  private async loadRowGeneralStars(
-    el: HTMLElement,
+  private async loadRowProfileListMeta(
+    starsEl: HTMLElement,
+    tagsEl: HTMLElement,
     filePath: string,
   ): Promise<void> {
     if (!isProfileScorableFilePath(filePath)) {
-      el.textContent = "";
+      starsEl.textContent = "";
+      tagsEl.textContent = "";
+      tagsEl.removeAttribute("aria-label");
       return;
     }
     try {
       const meta = await this.api.audio.getMetadata(filePath);
-      el.textContent = formatGeneralRowStars(meta.profileScores?.general);
+      starsEl.textContent = formatGeneralRowStars(meta.profileScores?.general);
+      fillListRowActiveTagsContainer(tagsEl, meta.activeProfileTags);
     } catch {
-      el.textContent = "";
+      starsEl.textContent = "";
+      tagsEl.textContent = "";
+      tagsEl.removeAttribute("aria-label");
     }
   }
 
@@ -946,11 +954,14 @@ export class PlaylistsPanel {
 
     const generalStars = document.createElement("span");
     generalStars.className = "fe-row__general-stars fe-row__general-stars--playlist";
-    generalStars.setAttribute("aria-label", "Note General");
+    generalStars.setAttribute("aria-label", "Note");
+    const activeTags = document.createElement("span");
+    activeTags.className = "fe-row__active-tags fe-row__active-tags--playlist";
+    activeTags.setAttribute("aria-label", "");
 
     const fileWrap = document.createElement("div");
     fileWrap.className = "fe-row__file-with-stars";
-    fileWrap.append(fileSpan, generalStars);
+    fileWrap.append(fileSpan, generalStars, activeTags);
 
     if (path) {
       el.dataset.trackPath = path;
@@ -959,7 +970,7 @@ export class PlaylistsPanel {
     el.append(iconSpan, titleSpan, artistSpan, fileWrap);
 
     if (path && isProfileScorableFilePath(path)) {
-      void this.loadRowGeneralStars(generalStars, path);
+      void this.loadRowProfileListMeta(generalStars, activeTags, path);
     }
 
     el.addEventListener("dragstart", (e) => {

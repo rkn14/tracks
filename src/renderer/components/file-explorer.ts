@@ -11,6 +11,7 @@ import {
   formatGeneralRowStars,
   isProfileScorableFilePath,
 } from "@shared/profile-stars";
+import { fillListRowActiveTagsContainer } from "../lib/fill-active-tags-row";
 import { formatDurationMmSsFromMs } from "@shared/format-duration";
 import { eventBus } from "../lib/event-bus";
 
@@ -106,23 +107,30 @@ export class FileExplorer {
       const p = row.dataset.path;
       if (!p || !audioPathsEqual(p, filePath)) continue;
       const stars = row.querySelector<HTMLElement>(".fe-row__general-stars");
-      if (stars) void this.loadRowGeneralStars(stars, p);
+      const tags = row.querySelector<HTMLElement>(".fe-row__active-tags");
+      if (stars && tags) void this.loadRowProfileListMeta(stars, tags, p);
     }
   }
 
-  private async loadRowGeneralStars(
-    el: HTMLElement,
+  private async loadRowProfileListMeta(
+    starsEl: HTMLElement,
+    tagsEl: HTMLElement,
     filePath: string,
   ): Promise<void> {
     if (!isProfileScorableFilePath(filePath)) {
-      el.textContent = "";
+      starsEl.textContent = "";
+      tagsEl.textContent = "";
+      tagsEl.removeAttribute("aria-label");
       return;
     }
     try {
       const meta = await this.api.audio.getMetadata(filePath);
-      el.textContent = formatGeneralRowStars(meta.profileScores?.general);
+      starsEl.textContent = formatGeneralRowStars(meta.profileScores?.general);
+      fillListRowActiveTagsContainer(tagsEl, meta.activeProfileTags);
     } catch {
-      el.textContent = "";
+      starsEl.textContent = "";
+      tagsEl.textContent = "";
+      tagsEl.removeAttribute("aria-label");
     }
   }
 
@@ -856,8 +864,11 @@ export class FileExplorer {
     baseSpan.textContent = entry.name;
     const generalStars = document.createElement("span");
     generalStars.className = "fe-row__general-stars";
-    generalStars.setAttribute("aria-label", "Note General");
-    nameSpan.append(baseSpan, generalStars);
+    generalStars.setAttribute("aria-label", "Note");
+    const activeTags = document.createElement("span");
+    activeTags.className = "fe-row__active-tags";
+    activeTags.setAttribute("aria-label", "");
+    nameSpan.append(baseSpan, generalStars, activeTags);
 
     const durationSpan = document.createElement("span");
     durationSpan.className = "fe-row__duration";
@@ -874,7 +885,7 @@ export class FileExplorer {
     row.append(iconSpan, nameSpan, durationSpan, extSpan);
 
     if (isProfileScorableFilePath(entry.path)) {
-      void this.loadRowGeneralStars(generalStars, entry.path);
+      void this.loadRowProfileListMeta(generalStars, activeTags, entry.path);
     }
 
     row.addEventListener("click", (e) => {

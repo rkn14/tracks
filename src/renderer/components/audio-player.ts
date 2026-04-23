@@ -17,12 +17,12 @@ import {
 import { loadProfileTagsAvailable } from "@shared/profile-tags-settings";
 import {
   defaultProfileScores,
-  isProfileTagAxis,
   isProfileTagKey,
   normalizeProfileScores,
   profileScoresForPersistence,
   PROFILE_TAG_AXES,
 } from "@shared/profile-scores";
+import { profileTagColorCssVarName } from "@shared/profile-tag-colors";
 import { formatDurationMmSsFromMs } from "@shared/format-duration";
 const MIME_BY_EXT: Record<string, string> = {
   ".mp3": "audio/mpeg",
@@ -239,11 +239,9 @@ export class AudioPlayer {
     return this.availableProfileTagIds
       .map((id) => {
         const label = this.escapeProfileTagLabelHtml(getProfileTagLabel(id));
-        const mod = isProfileTagAxis(id)
-          ? ` player__tag-toggle--${id}`
-          : " player__tag-toggle--custom";
         const eid = this.escapeProfileTagAttr(id);
-        return `<label class="player__tag-toggle${mod}"><input type="checkbox" class="player__tag-toggle-input" data-profile-tag-toggle="${eid}" /><span class="player__tag-toggle-pill">${label}</span></label>`;
+        const pt = `var(${profileTagColorCssVarName(id)})`;
+        return `<label class="player__tag-toggle" style="--pt: ${pt}"><input type="checkbox" class="player__tag-toggle-input" data-profile-tag-toggle="${eid}" /><span class="player__tag-toggle-pill">${label}</span></label>`;
       })
       .join("");
   }

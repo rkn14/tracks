@@ -6,9 +6,14 @@ import {
 } from "@shared/profile-tag-labels";
 import { PROFILE_TAG_AXES } from "@shared/profile-scores";
 import {
+  defaultProfileTagColorHex,
+  mergeProfileTagColorsWithDefaults,
+} from "@shared/profile-tag-colors";
+import {
   loadProfileTagsAvailable,
   normalizeProfileTagsAvailable,
 } from "@shared/profile-tags-settings";
+import { loadAndApplyProfileTagTheme } from "./lib/profile-tag-theme";
 import { FileExplorer } from "./components/file-explorer";
 import { PlaylistsPanel } from "./components/playlists-panel";
 import { AudioPlayer } from "./components/audio-player";
@@ -67,6 +72,7 @@ export async function initApp(): Promise<void> {
   );
 
   let profileTagsDraft: string[] = [];
+  let profileTagColorsDraft: Record<string, string> = {};
   const profileTagsListEl = document.getElementById("settings-profile-tags-list");
   const profileTagAddInput = document.getElementById("settings-profile-tag-add") as
     | HTMLInputElement
@@ -115,6 +121,7 @@ export async function initApp(): Promise<void> {
       return;
     }
     profileTagsDraft.push(resolved);
+    profileTagColorsDraft[resolved] = defaultProfileTagColorHex(resolved);
     profileTagAddInput.value = "";
     renderSettingsProfileTagsList();
   };
@@ -129,6 +136,14 @@ export async function initApp(): Promise<void> {
       const name = document.createElement("span");
       name.className = "settings-profile-tag-name";
       name.textContent = getProfileTagLabel(axis);
+      const colorIn = document.createElement("input");
+      colorIn.type = "color";
+      colorIn.className = "settings-profile-tag-color";
+      colorIn.dataset.profileTag = axis;
+      colorIn.value =
+        profileTagColorsDraft[axis] ?? defaultProfileTagColorHex(axis);
+      colorIn.title = "Couleur du tag (lecteur et listes)";
+      colorIn.setAttribute("aria-label", `Couleur de ${getProfileTagLabel(axis)}`);
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "settings-profile-tag-remove";
@@ -136,7 +151,7 @@ export async function initApp(): Promise<void> {
       btn.title = "Retirer de la liste";
       btn.setAttribute("aria-label", `Retirer ${getProfileTagLabel(axis)}`);
       btn.textContent = "\u2715";
-      li.append(name, btn);
+      li.append(name, colorIn, btn);
       profileTagsListEl.appendChild(li);
     }
     if (profileTagAddInput && profileTagAddBtn) {
@@ -144,6 +159,21 @@ export async function initApp(): Promise<void> {
       profileTagAddBtn.disabled = false;
     }
   };
+
+  profileTagsListEl?.addEventListener("input", (e) => {
+    const t = e.target;
+    if (
+      !(
+        t instanceof HTMLInputElement &&
+        t.classList.contains("settings-profile-tag-color")
+      )
+    ) {
+      return;
+    }
+    const id = t.dataset.profileTag;
+    if (!id) return;
+    profileTagColorsDraft[id] = t.value;
+  });
 
   profileTagsListEl?.addEventListener("click", (e) => {
     const t = (e.target as HTMLElement).closest<HTMLButtonElement>(
@@ -153,6 +183,7 @@ export async function initApp(): Promise<void> {
     const axis = t.dataset.profileTag;
     if (!axis) return;
     profileTagsDraft = profileTagsDraft.filter((a) => a !== axis);
+    delete profileTagColorsDraft[axis];
     renderSettingsProfileTagsList();
   });
 
@@ -178,18 +209,24 @@ export async function initApp(): Promise<void> {
       savedLibrary,
       savedEngineDjDb,
       savedProfileTags,
+      rawTagColors,
     ] = await Promise.all([
       electronApi.store.get<string>(STORE_KEYS.OPENAI_API_KEY),
       electronApi.store.get<string>(STORE_KEYS.GENRE_PROMPT),
       electronApi.store.get<string>(STORE_KEYS.LIBRARY_FOLDER),
       electronApi.store.get<string>(STORE_KEYS.ENGINE_DJ_DATABASE_PATH),
       loadProfileTagsAvailable((key) => electronApi.store.get(key)),
+      electronApi.store.get<Record<string, string>>(STORE_KEYS.PROFILE_TAG_COLORS),
     ]);
     openaiInput.value = savedKey ?? "";
     genrePromptInput.value = savedPrompt ?? "";
     libraryInput.value = savedLibrary ?? "";
     engineDjDbInput.value = savedEngineDjDb?.trim() || defaultEngineDjDb;
     profileTagsDraft = [...savedProfileTags];
+    profileTagColorsDraft = mergeProfileTagColorsWithDefaults(
+      rawTagColors,
+      profileTagsDraft,
+    );
     if (profileTagAddInput) {
       profileTagAddInput.value = "";
       profileTagAddInput.disabled = false;
@@ -212,6 +249,10 @@ export async function initApp(): Promise<void> {
       electronApi.store.get(key),
     );
     const profileTagsToStore = normalizeProfileTagsAvailable(profileTagsDraft);
+    const tagColorsToStore = mergeProfileTagColorsWithDefaults(
+      profileTagColorsDraft,
+      profileTagsToStore,
+    );
     const profileTagsChanged =
       previousProfileTags.length !== profileTagsToStore.length ||
       previousProfileTags.some((a, i) => a !== profileTagsToStore[i]);
@@ -221,7 +262,9 @@ export async function initApp(): Promise<void> {
       electronApi.store.set(STORE_KEYS.LIBRARY_FOLDER, newLibrary),
       electronApi.store.set(STORE_KEYS.ENGINE_DJ_DATABASE_PATH, engineDjDb),
       electronApi.store.set(STORE_KEYS.PROFILE_TAGS_AVAILABLE, profileTagsToStore),
+      electronApi.store.set(STORE_KEYS.PROFILE_TAG_COLORS, tagColorsToStore),
     ]);
+    await loadAndApplyProfileTagTheme((key) => electronApi.store.get(key));
     if (rightPanel && newLibrary) {
       await rightPanel.setLockedRoot(newLibrary);
     }
@@ -265,6 +308,8 @@ export async function initApp(): Promise<void> {
   const savedLibrary = await electronApi.store.get<string>(
     STORE_KEYS.LIBRARY_FOLDER,
   );
+
+  await loadAndApplyProfileTagTheme((key) => electronApi.store.get(key));
 
   // ── File explorers ───────────────────────────
   const leftPanel = new FileExplorer(
