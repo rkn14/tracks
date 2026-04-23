@@ -344,14 +344,32 @@ export async function listMp3(
   return results;
 }
 
+/** Tous les fichiers audio reconnus (`AUDIO_EXTENSIONS`) dans un dossier (non récursif). */
+export async function listFolderAudio(
+  dirPath: string,
+): Promise<{ name: string; path: string }[]> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const results: { name: string; path: string }[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const ext = path.extname(entry.name).toLowerCase();
+    if (!isAudioFile(ext)) continue;
+    results.push({ name: entry.name, path: path.join(dirPath, entry.name) });
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  return results;
+}
+
 export async function getAllGenres(dirPath: string): Promise<string[]> {
   const { parseFile } = await import("music-metadata");
-  const mp3s = await listMp3(dirPath);
+  const files = await listFolderAudio(dirPath);
   const genres = new Set<string>();
 
-  for (const mp3 of mp3s) {
+  for (const f of files) {
     try {
-      const meta = await parseFile(mp3.path);
+      const meta = await parseFile(f.path);
       if (meta.common.genre) {
         for (const g of meta.common.genre) genres.add(g);
       }

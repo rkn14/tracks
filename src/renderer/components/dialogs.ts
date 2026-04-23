@@ -320,7 +320,7 @@ export function showAutoFolderDialog(
     const title = document.createElement("div");
     title.className = "dialog-message";
     title.style.fontWeight = "700";
-    title.textContent = `Créer ${entries.length} dossier(s) et y déplacer ${toMove} fichier(s) (au moins 2 MP3 par artiste)`;
+    title.textContent = `Créer ${entries.length} dossier(s) et y déplacer ${toMove} fichier(s) (au moins 2 par artiste)`;
     box.appendChild(title);
 
     const list = document.createElement("div");
@@ -338,7 +338,7 @@ export function showAutoFolderDialog(
       noteSingle.className = "dialog-message";
       noteSingle.style.fontSize = "11px";
       noteSingle.style.color = "var(--color-text-muted)";
-      noteSingle.textContent = `${options.singleArtistFiles} fichier(s) (un seul MP3 pour cet artiste) restent à la racine.`;
+      noteSingle.textContent = `${options.singleArtistFiles} fichier(s) (un seul fichier pour cet artiste) restent à la racine.`;
       box.appendChild(noteSingle);
     }
 

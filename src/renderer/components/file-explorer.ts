@@ -111,7 +111,7 @@ export class FileExplorer {
         <div class="fe-dropdown" data-fe-dropdown>
           <button type="button" class="fe-btn fe-btn--tools fe-dropdown__trigger" data-action="tools-toggle" aria-expanded="false" aria-haspopup="menu" title="Outils">Tools</button>
           <div class="fe-dropdown__menu" role="menu" hidden>
-            <button type="button" class="fe-dropdown__item" role="menuitem" data-action="sort-artist" title="Dossier par artiste seulement s'il y a au moins 2 MP3 ; les autres restent ici">Sort by artist</button>
+            <button type="button" class="fe-dropdown__item" role="menuitem" data-action="sort-artist" title="Dossier par artiste seulement s'il y a au moins 2 fichiers audio (MP3, FLAC, etc.) ; les autres restent ici">Sort by artist</button>
             <button type="button" class="fe-dropdown__item" role="menuitem" data-action="unsort-folders" title="Remonter les MP3 des sous-dossiers vers ce dossier">Unsort folders</button>
           </div>
         </div>
@@ -966,8 +966,8 @@ export class FileExplorer {
   }
 
   /**
-   * Crée un sous-dossier par artiste seulement si au moins 2 MP3 partagent le même artiste (tags) ;
-   * les MP3 uniques pour un artiste restent à la racine du dossier courant.
+   * Crée un sous-dossier par artiste seulement si au moins 2 fichiers audio partagent le même artiste (tags) ;
+   * les fichiers uniques pour un artiste restent à la racine du dossier courant.
    */
   private async sortByArtist(): Promise<void> {
     if (!this.currentPath) {
@@ -975,16 +975,16 @@ export class FileExplorer {
       return;
     }
 
-    const mp3Files = await this.api.fs.listMp3(this.currentPath);
-    if (mp3Files.length === 0) {
-      await showAlert("Aucun fichier MP3 dans ce dossier.");
+    const audioFiles = await this.api.fs.listFolderAudio(this.currentPath);
+    if (audioFiles.length === 0) {
+      await showAlert("Aucun fichier audio (MP3, FLAC, etc.) dans ce dossier.");
       return;
     }
 
     const artistMap = new Map<string, { name: string; path: string }[]>();
     let skipped = 0;
 
-    for (const file of mp3Files) {
+    for (const file of audioFiles) {
       const meta = await this.api.audio.getMetadata(file.path);
       const artist = meta.artist?.trim();
       if (!artist) {
@@ -996,7 +996,7 @@ export class FileExplorer {
     }
 
     if (artistMap.size === 0) {
-      await showAlert("Aucun MP3 avec un artiste renseigné.");
+      await showAlert("Aucun fichier audio avec un artiste renseigné.");
       return;
     }
 
@@ -1011,7 +1011,7 @@ export class FileExplorer {
 
     if (multiMap.size === 0) {
       await showAlert(
-        "Aucun artiste avec au moins 2 MP3 dans ce dossier. Les fichiers uniques restent en place.",
+        "Aucun artiste avec au moins 2 fichiers audio dans ce dossier. Les fichiers uniques restent en place.",
       );
       return;
     }
@@ -1029,7 +1029,7 @@ export class FileExplorer {
     const errors: string[] = [];
     const sep = this.currentPath.includes("/") ? "/" : "\\";
 
-    // Dossier + déplacements uniquement pour les artistes avec ≥2 MP3 (les autres ne passent pas par ici).
+    // Dossier + déplacements uniquement pour les artistes avec ≥2 fichiers (les autres ne passent pas par ici).
     for (const [artist, files] of multiMap) {
       const folderName = artist.replace(/[<>:"/\\|?*]/g, "_");
       const folderPath = this.currentPath + sep + folderName;

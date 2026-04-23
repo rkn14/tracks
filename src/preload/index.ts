@@ -27,6 +27,8 @@ const electronApi: ElectronApi = {
       ipcRenderer.invoke(IpcChannel.FS_LIST_CONVERTIBLE, dirPath),
     listMp3: (dirPath) =>
       ipcRenderer.invoke(IpcChannel.FS_LIST_MP3, dirPath),
+    listFolderAudio: (dirPath) =>
+      ipcRenderer.invoke(IpcChannel.FS_LIST_FOLDER_AUDIO, dirPath),
     getAllGenres: (dirPath) =>
       ipcRenderer.invoke(IpcChannel.FS_GET_ALL_GENRES, dirPath),
     mkdir: (dirPath) =>

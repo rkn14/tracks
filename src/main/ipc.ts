@@ -20,6 +20,7 @@ import {
   getHome,
   listConvertible,
   listMp3,
+  listFolderAudio,
   getAllGenres,
   mkdir,
   copyEntry,
@@ -93,6 +94,10 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(IpcChannel.FS_LIST_MP3, (_, dirPath: string) =>
     listMp3(dirPath),
+  );
+
+  ipcMain.handle(IpcChannel.FS_LIST_FOLDER_AUDIO, (_, dirPath: string) =>
+    listFolderAudio(dirPath),
   );
 
   ipcMain.handle(IpcChannel.FS_GET_ALL_GENRES, (_, dirPath: string) =>

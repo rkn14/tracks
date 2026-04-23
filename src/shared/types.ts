@@ -15,6 +15,8 @@ export const IpcChannel = {
   FS_GET_HOME: "fs:get-home",
   FS_LIST_CONVERTIBLE: "fs:list-convertible",
   FS_LIST_MP3: "fs:list-mp3",
+  /** Fichiers audio reconnus par l’app (MP3, FLAC, etc.) — non récursif, dossier courant seulement. */
+  FS_LIST_FOLDER_AUDIO: "fs:list-folder-audio",
   FS_GET_ALL_GENRES: "fs:get-all-genres",
   FS_MKDIR: "fs:mkdir",
   FS_COPY: "fs:copy",
@@ -264,6 +266,7 @@ export interface ElectronApi {
     getHome: () => Promise<string>;
     listConvertible: (dirPath: string) => Promise<{ name: string; path: string }[]>;
     listMp3: (dirPath: string) => Promise<{ name: string; path: string }[]>;
+    listFolderAudio: (dirPath: string) => Promise<{ name: string; path: string }[]>;
     getAllGenres: (dirPath: string) => Promise<string[]>;
     mkdir: (dirPath: string) => Promise<void>;
     copy: (srcPath: string, destDir: string) => Promise<string>;
