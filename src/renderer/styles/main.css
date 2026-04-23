@@ -448,6 +448,22 @@ select {
   border-bottom-color: var(--color-accent);
 }
 
+/* Libellé unique (panneau droit « Library ») — aligné visuellement sur l’onglet actif */
+.panel-tabs__static {
+  display: inline-block;
+  padding: 6px 16px;
+  border: none;
+  border-bottom: 2px solid var(--color-accent);
+  color: var(--color-accent);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
 .panel-tab-page {
   display: none;
   flex-direction: column;

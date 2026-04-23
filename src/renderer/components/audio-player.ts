@@ -228,6 +228,7 @@ export class AudioPlayer {
     this.btnEssentiaAnalyze.addEventListener("click", () => void this.runEssentiaAnalyze());
 
     this.initEditableFields();
+    this.syncEssentiaProfilePanelVisibility();
   }
 
   private mergeProfileUiIntoBuffer(): void {
@@ -411,6 +412,13 @@ export class AudioPlayer {
     this.bottomRowEl.classList.toggle("player__bottom-row--no-scores", !visible);
   }
 
+  /** Essentia + note/tags : seulement si un fichier est chargé et (mp3|flac). */
+  private syncEssentiaProfilePanelVisibility(): void {
+    const show =
+      this.currentFilePath != null && this.isCurrentFileProfileable();
+    this.setProfileUiVisible(show);
+  }
+
   private applyProfileScoresToUi(
     scores: ProfileScores,
     activeProfileTags: string[],
@@ -584,6 +592,7 @@ export class AudioPlayer {
     }
 
     this.currentFilePath = filePath;
+    this.syncEssentiaProfilePanelVisibility();
     this.essentiaAnalysis = {};
     this.applyEssentiaToUi();
 
@@ -678,7 +687,7 @@ export class AudioPlayer {
       }
 
       const profileable = /\.(mp3|flac)$/i.test(filePath);
-      this.setProfileUiVisible(profileable);
+      this.syncEssentiaProfilePanelVisibility();
       const tagFilter = (t: string): boolean =>
         t !== "general" && isProfileTagKey(t);
       this.applyProfileScoresToUi(
@@ -706,7 +715,7 @@ export class AudioPlayer {
       this.bpmEl.textContent = "";
       this.qualityEl.textContent = "";
       this.coverImg.style.display = "none";
-      this.setProfileUiVisible(/\.(mp3|flac)$/i.test(filePath));
+      this.syncEssentiaProfilePanelVisibility();
       this.applyProfileScoresToUi(defaultProfileScores(), []);
       this.essentiaAnalysis = {};
       this.applyEssentiaToUi();

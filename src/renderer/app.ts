@@ -287,9 +287,13 @@ export async function initApp(): Promise<void> {
     if (e.key === "Escape") closeSettings();
   });
 
-  // ── Left panel tabs ─────────────────────────
-  const panelTabBtns = document.querySelectorAll<HTMLButtonElement>(".panel-tabs__btn");
-  const panelTabPages = document.querySelectorAll<HTMLElement>(".panel-tab-page");
+  // ── Left panel tabs (cibler uniquement la barre gauche ; le panneau droit n’a qu’un libellé)
+  const panelTabBtns = document.querySelectorAll<HTMLButtonElement>(
+    "#panel-tabs-left .panel-tabs__btn",
+  );
+  const panelTabPages = document.querySelectorAll<HTMLElement>(
+    "#panel-left, #panel-playlists",
+  );
 
   panelTabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {

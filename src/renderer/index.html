@@ -94,7 +94,7 @@
 
       <div class="panels">
         <div class="panel panel--tabbed">
-          <nav class="panel-tabs">
+          <nav class="panel-tabs" id="panel-tabs-left" aria-label="Panneau gauche">
             <button class="panel-tabs__btn is-active" data-panel-tab="folders">Folders</button>
             <button class="panel-tabs__btn" data-panel-tab="playlists">Playlists</button>
           </nav>
@@ -102,7 +102,16 @@
           <div class="panel-tab-page" data-panel-page="playlists" id="panel-playlists"></div>
         </div>
         <div class="panel-divider"></div>
-        <div class="panel" id="panel-right"></div>
+        <div class="panel panel--tabbed">
+          <nav class="panel-tabs panel-tabs--single" aria-label="Library">
+            <span class="panel-tabs__static" aria-current="true">Library</span>
+          </nav>
+          <div
+            class="panel-tab-page is-active"
+            data-panel-page="library"
+            id="panel-right"
+          ></div>
+        </div>
       </div>
 
       <div class="player-section" id="player-section"></div>
