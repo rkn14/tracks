@@ -5,6 +5,8 @@ export type EventMap = {
   /** Drag depuis l’explorateur (fichiers / dossier arbre) : chemins absolus. */
   "library-files-drag-start": { paths: string[] };
   "library-files-drag-end": Record<string, never>;
+  /** Notes profil (general) mises à jour sur le disque : rafraîchir les listes. */
+  "profile-scores-updated": { filePath: string };
 };
 
 type Handler<T> = (data: T) => void;

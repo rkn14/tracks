@@ -8,7 +8,13 @@ import type {
 } from "@shared/types";
 import { eventBus } from "../lib/event-bus";
 import { STORE_KEYS } from "@shared/constants";
-import { defaultProfileScores, normalizeProfileScores } from "@shared/profile-scores";
+import { isProfileScorableFilePath } from "@shared/profile-stars";
+import {
+  defaultProfileScores,
+  normalizeProfileScores,
+  profileScoreKeyList,
+} from "@shared/profile-scores";
+import { formatDurationMmSsFromMs } from "@shared/format-duration";
 const MIME_BY_EXT: Record<string, string> = {
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
@@ -146,47 +152,96 @@ export class AudioPlayer {
             </div>
           </div>
           <div class="player__scores">
-            <div class="player__score-row player__score-row--global" data-score="global">
-              <div class="player__score-head">
-                <span class="player__score-title">Global</span>
-                <span class="player__score-value">50</span>
+            <div class="player__score-row player__score-row--general" data-score="general">
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note General">
+                <span class="player__score-title">General</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
               </div>
-              <input class="player__score-input" type="range" min="0" max="100" value="50" />
             </div>
             <div class="player__score-row player__score-row--energy" data-score="energy">
-              <div class="player__score-head">
-                <span>Energy</span>
-                <span class="player__score-value">50</span>
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Energy">
+                <span class="player__score-title">Energy</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
               </div>
-              <input class="player__score-input" type="range" min="0" max="100" value="50" />
             </div>
-            <div class="player__score-row player__score-row--quantized" data-score="quantizedGroovy">
-              <div class="player__score-head">
-                <span>Groovy</span>
-                <span class="player__score-value">50</span>
+            <div class="player__score-row player__score-row--groove" data-score="groove">
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Groove">
+                <span class="player__score-title">Groove</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
               </div>
-              <input class="player__score-input" type="range" min="0" max="100" value="50" />
             </div>
-            <div class="player__score-row player__score-row--melodic" data-score="melodicRhythmic">
-              <div class="player__score-head">
-                <span>Melodic</span>
-                <span class="player__score-value">50</span>
+            <div class="player__score-row player__score-row--melodic" data-score="melodic">
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Melodic">
+                <span class="player__score-title">Melodic</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
               </div>
-              <input class="player__score-input" type="range" min="0" max="100" value="50" />
             </div>
-            <div class="player__score-row player__score-row--darklight" data-score="darkLight">
-              <div class="player__score-head">
-                <span>Dark</span>
-                <span class="player__score-value">50</span>
+            <div class="player__score-row player__score-row--dark" data-score="dark">
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Dark">
+                <span class="player__score-title">Dark</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
               </div>
-              <input class="player__score-input" type="range" min="0" max="100" value="50" />
             </div>
-            <div class="player__score-row player__score-row--softhard" data-score="softHard">
-              <div class="player__score-head">
-                <span>Hard</span>
-                <span class="player__score-value">50</span>
+            <div class="player__score-row player__score-row--hard" data-score="hard">
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Hard">
+                <span class="player__score-title">Hard</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
               </div>
-              <input class="player__score-input" type="range" min="0" max="100" value="50" />
+            </div>
+            <div class="player__score-row player__score-row--happy" data-score="happy">
+              <div class="player__score-stars" data-score-stars data-value="0" role="group" aria-label="Note Happy">
+                <span class="player__score-title">Happy</span>
+                <button type="button" class="player__score-zero" data-zero title="0 \u00e9toile">0</button>
+                <div class="player__score-starline" role="presentation">
+                  <button type="button" class="player__star" data-star="1" aria-pressed="false" aria-label="1 \u00e9toile">\u2605</button>
+                  <button type="button" class="player__star" data-star="2" aria-pressed="false" aria-label="2 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="3" aria-pressed="false" aria-label="3 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="4" aria-pressed="false" aria-label="4 \u00e9toiles">\u2605</button>
+                  <button type="button" class="player__star" data-star="5" aria-pressed="false" aria-label="5 \u00e9toiles">\u2605</button>
+                </div>
+              </div>
             </div>
           </div>
           <canvas class="player__spectrum" width="0" height="0"></canvas>
@@ -219,26 +274,45 @@ export class AudioPlayer {
     this.essentiaBpmEl = this.el.querySelector("[data-essentia-bpm]")!;
     this.essentiaKeyEl = this.el.querySelector("[data-essentia-key]")!;
     this.bottomRowEl = this.el.querySelector(".player__bottom-row")!;
-    this.initScoreSliders();
+    this.initScoreStars();
     this.btnEssentiaAnalyze.addEventListener("click", () => void this.runEssentiaAnalyze());
 
     this.initEditableFields();
   }
 
-  private initScoreSliders(): void {
-    const inputs = this.scoresEl.querySelectorAll<HTMLInputElement>(".player__score-input");
-    for (const input of inputs) {
-      input.addEventListener("input", () => {
-        this.syncScoreValueLabel(input);
-        this.scheduleProfileSave();
-      });
+  private syncProfileStarRow(container: HTMLElement, value0to100: number): void {
+    const v = Math.min(100, Math.max(0, Math.round(value0to100 / 20) * 20));
+    container.dataset.value = String(v);
+    const n = v / 20;
+    container
+      .querySelector(".player__score-zero")
+      ?.classList.toggle("is-active", n === 0);
+    for (const btn of container.querySelectorAll<HTMLButtonElement>(".player__star")) {
+      const k = parseInt(btn.dataset.star ?? "0", 10);
+      const on = n >= k;
+      btn.classList.toggle("player__star--on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
   }
 
-  private syncScoreValueLabel(input: HTMLInputElement): void {
-    const row = input.closest("[data-score]");
-    const valueEl = row?.querySelector(".player__score-value");
-    if (valueEl) valueEl.textContent = input.value;
+  private initScoreStars(): void {
+    this.scoresEl.addEventListener("click", (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement)) return;
+      const container = t.closest<HTMLElement>("[data-score-stars]");
+      if (!container || !this.scoresEl.contains(container)) return;
+      if (t.closest(".player__score-zero")) {
+        this.syncProfileStarRow(container, 0);
+        this.scheduleProfileSave();
+        return;
+      }
+      const star = t.closest<HTMLButtonElement>(".player__star");
+      if (!star) return;
+      const n = parseInt(star.dataset.star ?? "0", 10);
+      if (n < 1 || n > 5) return;
+      this.syncProfileStarRow(container, n * 20);
+      this.scheduleProfileSave();
+    });
   }
 
   private applyEssentiaToUi(): void {
@@ -277,6 +351,7 @@ export class AudioPlayer {
         this.readProfileScoresFromUi(),
         this.essentiaSnapshotForWrite(),
       );
+      this.emitProfileScoresUpdated(path);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -294,8 +369,10 @@ export class AudioPlayer {
     }
   }
 
-  private isCurrentFileMp3(): boolean {
-    return !!this.currentFilePath?.toLowerCase().endsWith(".mp3");
+  /** MP3 (ID3 TXXX) ou FLAC (Vorbis) : notation profil + sauvegarde. */
+  private isCurrentFileProfileable(): boolean {
+    const p = this.currentFilePath?.toLowerCase() ?? "";
+    return p.endsWith(".mp3") || p.endsWith(".flac");
   }
 
   private setProfileUiVisible(visible: boolean): void {
@@ -303,49 +380,49 @@ export class AudioPlayer {
   }
 
   private applyProfileScoresToUi(scores: ProfileScores): void {
-    const keys: (keyof ProfileScores)[] = [
-      "global", "energy", "quantizedGroovy", "melodicRhythmic", "darkLight", "softHard",
-    ];
-    for (const key of keys) {
-      const row = this.scoresEl.querySelector(`[data-score="${key}"]`);
-      const input = row?.querySelector<HTMLInputElement>(".player__score-input");
-      if (input) {
-        input.value = String(scores[key]);
-        this.syncScoreValueLabel(input);
+    for (const key of profileScoreKeyList) {
+      const row = this.scoresEl.querySelector<HTMLElement>(`[data-score="${key}"]`);
+      const container = row?.querySelector<HTMLElement>("[data-score-stars]");
+      if (container) {
+        this.syncProfileStarRow(container, scores[key]);
       }
     }
   }
 
   private readProfileScoresFromUi(): ProfileScores {
-    const keys: (keyof ProfileScores)[] = [
-      "global", "energy", "quantizedGroovy", "melodicRhythmic", "darkLight", "softHard",
-    ];
     const raw: Partial<ProfileScores> = {};
-    for (const key of keys) {
-      const row = this.scoresEl.querySelector(`[data-score="${key}"]`);
-      const input = row?.querySelector<HTMLInputElement>(".player__score-input");
-      raw[key] = input ? parseInt(input.value, 10) : 50;
+    for (const key of profileScoreKeyList) {
+      const row = this.scoresEl.querySelector<HTMLElement>(`[data-score="${key}"]`);
+      const c = row?.querySelector<HTMLElement>("[data-score-stars]");
+      raw[key] = c != null ? parseInt(c.dataset.value ?? "0", 10) : 0;
     }
     return normalizeProfileScores(raw);
   }
 
   private scheduleProfileSave(): void {
-    if (!this.isCurrentFileMp3() || !this.currentFilePath) return;
+    if (!this.isCurrentFileProfileable() || !this.currentFilePath) return;
     if (this.profileSaveTimer) clearTimeout(this.profileSaveTimer);
     this.profileSaveTimer = setTimeout(async () => {
       this.profileSaveTimer = null;
       const path = this.currentFilePath;
-      if (!path?.toLowerCase().endsWith(".mp3")) return;
+      if (!this.isCurrentFileProfileable() || !path) return;
       try {
         await this.api.audio.writeProfileScores(
           path,
           this.readProfileScoresFromUi(),
           this.essentiaSnapshotForWrite(),
         );
+        this.emitProfileScoresUpdated(path);
       } catch (err) {
         console.error("Échec de l’écriture des notes profil", err);
       }
     }, 350);
+  }
+
+  private emitProfileScoresUpdated(filePath: string): void {
+    if (isProfileScorableFilePath(filePath)) {
+      eventBus.emit("profile-scores-updated", { filePath });
+    }
   }
 
   private static readonly EDITABLE_FIELDS = new Set([
@@ -436,18 +513,19 @@ export class AudioPlayer {
       clearTimeout(this.profileSaveTimer);
       this.profileSaveTimer = null;
     }
-    if (
-      hadPendingProfileSave &&
-      previousPath?.toLowerCase().endsWith(".mp3")
-    ) {
-      try {
-        await this.api.audio.writeProfileScores(
-          previousPath,
-          this.readProfileScoresFromUi(),
-          this.essentiaSnapshotForWrite(),
-        );
-      } catch (err) {
-        console.error("Échec de l’écriture des notes profil (flush)", err);
+    if (hadPendingProfileSave && previousPath) {
+      const pl = previousPath.toLowerCase();
+      if (pl.endsWith(".mp3") || pl.endsWith(".flac")) {
+        try {
+          await this.api.audio.writeProfileScores(
+            previousPath,
+            this.readProfileScoresFromUi(),
+            this.essentiaSnapshotForWrite(),
+          );
+          this.emitProfileScoresUpdated(previousPath);
+        } catch (err) {
+          console.error("Échec de l’écriture des notes profil (flush)", err);
+        }
       }
     }
 
@@ -524,7 +602,7 @@ export class AudioPlayer {
       this.yearEl.textContent = meta.year ? String(meta.year) : "";
       this.labelEl.textContent = meta.label || "";
       this.durationEl.textContent = meta.duration
-        ? formatTime(meta.duration)
+        ? formatDurationMmSsFromMs(meta.duration)
         : "";
       this.bpmEl.textContent = meta.bpm ? String(Math.round(meta.bpm)) : "";
 
@@ -544,18 +622,19 @@ export class AudioPlayer {
         this.coverImg.style.display = "none";
       }
 
-      const mp3 = filePath.toLowerCase().endsWith(".mp3");
-      this.setProfileUiVisible(mp3);
+      const profileable = /\.(mp3|flac)$/i.test(filePath);
+      this.setProfileUiVisible(profileable);
       this.applyProfileScoresToUi(
-        mp3 ? normalizeProfileScores(meta.profileScores) : defaultProfileScores(),
+        profileable
+          ? normalizeProfileScores(meta.profileScores)
+          : defaultProfileScores(),
       );
-      if (mp3) {
+      if (profileable) {
         this.essentiaAnalysis = { ...meta.essentiaAnalysis };
-        this.applyEssentiaToUi();
       } else {
         this.essentiaAnalysis = {};
-        this.applyEssentiaToUi();
       }
+      this.applyEssentiaToUi();
     } catch {
       this.titleEl.textContent = fileName;
       this.artistEl.textContent = "";
@@ -567,7 +646,7 @@ export class AudioPlayer {
       this.bpmEl.textContent = "";
       this.qualityEl.textContent = "";
       this.coverImg.style.display = "none";
-      this.setProfileUiVisible(filePath.toLowerCase().endsWith(".mp3"));
+      this.setProfileUiVisible(/\.(mp3|flac)$/i.test(filePath));
       this.applyProfileScoresToUi(defaultProfileScores());
       this.essentiaAnalysis = {};
       this.applyEssentiaToUi();

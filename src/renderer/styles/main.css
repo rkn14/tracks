@@ -766,7 +766,7 @@ button.fe-tree-item.dj-pl-tree-leaf {
 
 .fe-row {
   display: grid;
-  grid-template-columns: 24px 1fr 70px 50px;
+  grid-template-columns: 24px 1fr 50px;
   align-items: center;
   height: 28px;
   padding: 0 8px;
@@ -797,6 +797,53 @@ button.fe-tree-item.dj-pl-tree-leaf {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12.5px;
+}
+
+.fe-row__name--inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fe-row__basename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.fe-row__general-stars {
+  flex: 0 0 auto;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  color: #f0c040;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Liste playlist : note à côté du nom de fichier (dernière colonne) */
+.fe-row__file-with-stars {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fe-row__file-with-stars .fe-row__ext--playlist {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fe-row__general-stars--playlist {
+  flex: 0 0 auto;
 }
 
 .fe-row__size {
@@ -1006,92 +1053,128 @@ button.fe-tree-item.dj-pl-tree-leaf {
 .player__scores {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px 0;
+  gap: 4px;
+  padding: 2px 0;
   min-width: 0;
   overflow-y: auto;
 }
 
 .player__score-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: block;
 }
 
-.player__score-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-text-muted);
-}
-
-.player__score-title {
-  color: var(--color-text);
-}
-
-.player__score-value {
-  flex: none;
+/* Critère (General, Groove, …) sur la même ligne que 0 + étoiles */
+.player__score-stars .player__score-title {
+  flex: 0 0 6rem;
+  width: 6rem;
+  min-width: 6rem;
   text-align: right;
   font-size: 11px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #f0f0f5;
+  line-height: 1.25;
 }
 
-.player__score-input {
-  width: 100%;
-  height: 6px;
-  appearance: none;
-  border-radius: 3px;
-  outline: none;
+.player__score-stars {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px 9px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.player__score-zero {
+  flex: none;
+  min-width: 25px;
+  height: 25px;
+  padding: 0 5px;
+  border: 1px solid var(--color-border, #3d4454);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface-alt, #2a2f3a);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
   cursor: pointer;
+  line-height: 1;
 }
 
-.player__score-input::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 3px;
+.player__score-zero:hover {
+  border-color: var(--color-accent, #e94560);
+  color: var(--color-text);
 }
 
-.player__score-input::-webkit-slider-thumb {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -4px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid var(--color-accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+.player__score-zero.is-active {
+  border-color: var(--color-accent, #e94560);
+  color: var(--color-accent, #e94560);
 }
 
-.player__score-row--global .player__score-input::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, #4a1a2e 0%, #e8a4b8 50%, #ffd6e0 100%);
+.player__score-starline {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  min-width: 0;
 }
 
-.player__score-row--energy .player__score-input::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, #f5e000 0%, #ff8800 50%, #e92222 100%);
+.player__star {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.18);
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: color 0.12s ease, transform 0.12s ease;
 }
 
-.player__score-row--quantized .player__score-input::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, #2563eb 0%, #22c55e 100%);
+.player__star:hover {
+  color: rgba(255, 255, 255, 0.45);
+  transform: scale(1.08);
 }
 
-.player__score-row--melodic .player__score-input::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, #3b82f6 0%, #e94560 100%);
+.player__star.player__star--on {
+  color: #fbbf24;
+  text-shadow: 0 0 10px rgba(251, 191, 36, 0.35);
 }
 
-.player__score-row--darklight .player__score-input::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, #1e293b 0%, #e2e8f0 100%);
+.player__score-row--general .player__star--on {
+  color: #f9a8d4;
+  text-shadow: 0 0 8px rgba(249, 168, 212, 0.3);
 }
 
-.player__score-row--softhard .player__score-input::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, #f9a8d4 0%, #e94560 100%);
+.player__score-row--energy .player__star--on {
+  color: #fb923c;
+}
+
+.player__score-row--groove .player__star--on {
+  color: #4ade80;
+}
+
+.player__score-row--melodic .player__star--on {
+  color: #60a5fa;
+}
+
+.player__score-row--dark .player__star--on {
+  color: #cbd5e1;
+}
+
+.player__score-row--hard .player__star--on {
+  color: #f472b6;
+}
+
+.player__score-row--happy .player__star--on {
+  color: #22d3ee;
 }
 
 /* Meta */
@@ -1217,10 +1300,18 @@ button.fe-tree-item.dj-pl-tree-leaf {
 
 .player__value--year,
 .player__value--label,
-.player__value--duration,
 .player__value--bpm {
   font-size: 13px;
   color: var(--color-text);
+}
+
+/* Durée : mm:ss, chiffres alignés, texte clair sur le panneau lecteur. */
+.player__value--duration {
+  font-size: 13px;
+  color: #fff;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 
 .player__value--quality {

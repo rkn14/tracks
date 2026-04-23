@@ -86,14 +86,18 @@ export type AudioExtension = (typeof AUDIO_EXTENSIONS)[number];
 
 // ── Audio metadata ─────────────────────────────
 
-/** Stored in ID3 TXXX `tracks.app/profileScores` as JSON. All values 0–100, default 50. */
+/**
+ * Notation profil (7 axes). Valeurs 0–100 par pas de 20 (0, 20, 40, 60, 80, 100), défaut 0.
+ * Stocké en JSON (ID3 TXXX ou Vorbis) sous la clé `tracks.app/profileScores`.
+ */
 export interface ProfileScores {
-  global: number;
+  general: number;
   energy: number;
-  quantizedGroovy: number;
-  melodicRhythmic: number;
-  darkLight: number;
-  softHard: number;
+  groove: number;
+  melodic: number;
+  dark: number;
+  hard: number;
+  happy: number;
 }
 
 /** Analyse locale (Essentia), stockée dans le même TXXX que les scores, clé `essentia`. */
@@ -111,6 +115,7 @@ export interface AudioMetadata {
   year?: number;
   label?: string;
   bpm?: number;
+  /** Durée du fichier en millisecondes. */
   duration?: number;
   cover?: string;
   format?: string;

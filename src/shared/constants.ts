@@ -9,7 +9,7 @@ export const DEFAULT_WINDOW_CONFIG = {
 
 export const PLAYER_HEIGHT = 340;
 
-/** ID3 TXXX description for JSON profile scores (0–100), default 50 per axis. */
+/** Même clé : ID3 TXXX (MP3) et champ Vorbis/FLAC — JSON { scores, essentia? }. */
 export const TRACKS_PROFILE_TXXX_DESCRIPTION = "tracks.app/profileScores";
 
 export const STORE_KEYS = {

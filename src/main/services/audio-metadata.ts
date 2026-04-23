@@ -5,13 +5,18 @@ import { parseProfileTagJson } from "@shared/profile-tag";
 
 const TXXX_PREFIX = "TXXX:";
 
-function profileTxxxIdMatches(tagId: string): boolean {
+function profileFieldIdMatches(tagId: string): boolean {
   const id = tagId.trim();
-  if (!id.toUpperCase().startsWith(TXXX_PREFIX)) return false;
-  const desc = id.slice(TXXX_PREFIX.length);
-  return (
-    desc.toLowerCase() === TRACKS_PROFILE_TXXX_DESCRIPTION.toLowerCase()
-  );
+  const want = TRACKS_PROFILE_TXXX_DESCRIPTION.toLowerCase();
+  if (id.toLowerCase() === want) return true;
+  if (id.toLowerCase() === `txxx:${want}`) return true;
+  if (id.toLowerCase() === `vorbis:${want}`) return true;
+  if (id.toLowerCase() === `vorbis comment:${want}`) return true;
+  const up = id.toUpperCase();
+  if (up.startsWith(TXXX_PREFIX)) {
+    return id.slice(TXXX_PREFIX.length).toLowerCase() === want;
+  }
+  return false;
 }
 
 function valueToJsonString(raw: unknown): string {
@@ -33,7 +38,7 @@ function parseProfileTagFromNative(
   if (!native) return undefined;
   for (const tagType of Object.keys(native)) {
     for (const tag of native[tagType] ?? []) {
-      if (!profileTxxxIdMatches(tag.id)) continue;
+      if (!profileFieldIdMatches(tag.id)) continue;
       const str = valueToJsonString(tag.value);
       if (!str.trim()) return undefined;
       return parseProfileTagJson(str);
@@ -65,7 +70,10 @@ export async function getAudioMetadata(
     year: common.year,
     label: common.label?.[0],
     bpm: common.bpm,
-    duration: format.duration,
+    duration:
+      format.duration == null
+        ? undefined
+        : Math.round(format.duration * 1000),
     cover,
     format: format.codec,
     bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : undefined,

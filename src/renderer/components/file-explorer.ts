@@ -6,18 +6,16 @@ import {
 } from "./context-menu";
 import { showPrompt, showConfirm, showAlert, showConvertDialog, showMetaIADialog, showAutoFolderDialog } from "./dialogs";
 import { STORE_KEYS } from "@shared/constants";
+import {
+  audioPathsEqual,
+  formatGeneralRowStars,
+  isProfileScorableFilePath,
+} from "@shared/profile-stars";
 import { eventBus } from "../lib/event-bus";
 
 type PanelId = "left" | "right";
 
 const audioExtSet = new Set<string>(AUDIO_EXTENSIONS as readonly string[]);
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} Mo`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} Go`;
-}
 
 function feNormalizeDir(p: string): string {
   return p.replace(/[\\/]+$/, "");
@@ -96,6 +94,34 @@ export class FileExplorer {
     this.panelId = panelId;
     this.el = container;
     this.buildShell();
+    eventBus.on("profile-scores-updated", ({ filePath }) => {
+      this.updateGeneralStarsForFilePath(filePath);
+    });
+  }
+
+  private updateGeneralStarsForFilePath(filePath: string): void {
+    for (const row of this.contentEl.querySelectorAll<HTMLElement>(".fe-row")) {
+      const p = row.dataset.path;
+      if (!p || !audioPathsEqual(p, filePath)) continue;
+      const stars = row.querySelector<HTMLElement>(".fe-row__general-stars");
+      if (stars) void this.loadRowGeneralStars(stars, p);
+    }
+  }
+
+  private async loadRowGeneralStars(
+    el: HTMLElement,
+    filePath: string,
+  ): Promise<void> {
+    if (!isProfileScorableFilePath(filePath)) {
+      el.textContent = "";
+      return;
+    }
+    try {
+      const meta = await this.api.audio.getMetadata(filePath);
+      el.textContent = formatGeneralRowStars(meta.profileScores?.general);
+    } catch {
+      el.textContent = "";
+    }
   }
 
   private buildShell(): void {
@@ -783,18 +809,24 @@ export class FileExplorer {
     iconSpan.textContent = "🎵";
 
     const nameSpan = document.createElement("span");
-    nameSpan.className = "fe-row__name";
-    nameSpan.textContent = entry.name;
-
-    const sizeSpan = document.createElement("span");
-    sizeSpan.className = "fe-row__size";
-    sizeSpan.textContent = entry.size > 0 ? formatSize(entry.size) : "";
+    nameSpan.className = "fe-row__name fe-row__name--inline";
+    const baseSpan = document.createElement("span");
+    baseSpan.className = "fe-row__basename";
+    baseSpan.textContent = entry.name;
+    const generalStars = document.createElement("span");
+    generalStars.className = "fe-row__general-stars";
+    generalStars.setAttribute("aria-label", "Note General");
+    nameSpan.append(baseSpan, generalStars);
 
     const extSpan = document.createElement("span");
     extSpan.className = "fe-row__ext";
     extSpan.textContent = entry.extension.toUpperCase().slice(1);
 
-    row.append(iconSpan, nameSpan, sizeSpan, extSpan);
+    row.append(iconSpan, nameSpan, extSpan);
+
+    if (isProfileScorableFilePath(entry.path)) {
+      void this.loadRowGeneralStars(generalStars, entry.path);
+    }
 
     row.addEventListener("click", (e) => {
       this.selectEntry(entry, row, e);

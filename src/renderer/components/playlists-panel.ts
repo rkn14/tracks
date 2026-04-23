@@ -1,4 +1,9 @@
 import type { DjPlaylistNode, DjPlaylistTrackRow, ElectronApi } from "@shared/types";
+import {
+  audioPathsEqual,
+  formatGeneralRowStars,
+  isProfileScorableFilePath,
+} from "@shared/profile-stars";
 import { contextMenu, type ContextMenuEntry } from "./context-menu";
 import { showAlert, showConfirm, showPrompt } from "./dialogs";
 import { eventBus } from "../lib/event-bus";
@@ -74,6 +79,9 @@ export class PlaylistsPanel {
     });
     eventBus.on("library-files-drag-end", () => {
       this.libraryDragPaths = null;
+    });
+    eventBus.on("profile-scores-updated", ({ filePath }) => {
+      this.updateTrackGeneralStarsForFilePath(filePath);
     });
 
     this.root.tabIndex = -1;
@@ -151,6 +159,33 @@ export class PlaylistsPanel {
 
   private clearTracksPaneLibraryDropHighlight(): void {
     this.tracksEl.classList.remove("dj-pl-tracks--library-drop-target");
+  }
+
+  private updateTrackGeneralStarsForFilePath(filePath: string): void {
+    for (const row of this.tracksEl.querySelectorAll<HTMLElement>(
+      ".fe-row--playlist-tracks",
+    )) {
+      const p = row.dataset.trackPath?.trim() ?? "";
+      if (!p || !audioPathsEqual(p, filePath)) continue;
+      const stars = row.querySelector<HTMLElement>(".fe-row__general-stars");
+      if (stars) void this.loadRowGeneralStars(stars, p);
+    }
+  }
+
+  private async loadRowGeneralStars(
+    el: HTMLElement,
+    filePath: string,
+  ): Promise<void> {
+    if (!isProfileScorableFilePath(filePath)) {
+      el.textContent = "";
+      return;
+    }
+    try {
+      const meta = await this.api.audio.getMetadata(filePath);
+      el.textContent = formatGeneralRowStars(meta.profileScores?.general);
+    } catch {
+      el.textContent = "";
+    }
   }
 
   private parseTrackDragPayload(raw: string): TrackDragPayload | null {
@@ -909,7 +944,23 @@ export class PlaylistsPanel {
     const fn = row.filename?.trim();
     fileSpan.textContent = fn || (path ? path.split(/[/\\]/).pop() ?? "" : "");
 
-    el.append(iconSpan, titleSpan, artistSpan, fileSpan);
+    const generalStars = document.createElement("span");
+    generalStars.className = "fe-row__general-stars fe-row__general-stars--playlist";
+    generalStars.setAttribute("aria-label", "Note General");
+
+    const fileWrap = document.createElement("div");
+    fileWrap.className = "fe-row__file-with-stars";
+    fileWrap.append(fileSpan, generalStars);
+
+    if (path) {
+      el.dataset.trackPath = path;
+    }
+
+    el.append(iconSpan, titleSpan, artistSpan, fileWrap);
+
+    if (path && isProfileScorableFilePath(path)) {
+      void this.loadRowGeneralStars(generalStars, path);
+    }
 
     el.addEventListener("dragstart", (e) => {
       const dt = e.dataTransfer;

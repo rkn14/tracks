@@ -16,46 +16,68 @@ import { serializeProfileTag } from "@shared/profile-tag";
 
 export { defaultProfileScores, normalizeProfileScores };
 
+type XiphWritable = {
+  getFieldFirstValue: (key: string) => string;
+  setFieldAsStrings: (key: string, ...values: string[]) => void;
+  removeField: (key: string) => void;
+};
+
 export async function writeProfileScores(
   filePath: string,
   scores: ProfileScores,
   essentia?: EssentiaAnalysis,
 ): Promise<void> {
-  if (path.extname(filePath).toLowerCase() !== ".mp3") {
-    throw new Error("Les notes profil ne sont prises en charge que pour les fichiers MP3");
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext !== ".mp3" && ext !== ".flac") {
+    throw new Error(
+      "Les notes profil ne sont prises en charge que pour les fichiers MP3 et FLAC",
+    );
   }
 
   const normalized = normalizeProfileScores(scores);
   const json = serializeProfileTag(normalized, essentia);
+  const fieldName = TRACKS_PROFILE_TXXX_DESCRIPTION;
 
-  let file: ReturnType<typeof File.createFromPath> | null = null;
+  const file: ReturnType<typeof File.createFromPath> = File.createFromPath(
+    filePath,
+  );
   try {
-    file = File.createFromPath(filePath);
-    const tag = file.getTag(TagTypes.Id3v2, true);
-    // Ne pas utiliser `instanceof Id3v2Tag` : avec le bundling Electron, deux copies du module
-    // peuvent faire échouer le test alors que l’objet est bien un tag ID3v2.
-    if (!tag || typeof (tag as Id3v2Tag).getFramesByClassType !== "function") {
-      throw new Error("Impossible d'obtenir le tag ID3v2");
-    }
-    const id3Tag = tag as Id3v2Tag;
+    if (ext === ".mp3") {
+      const tag = file.getTag(TagTypes.Id3v2, true);
+      if (!tag || typeof (tag as Id3v2Tag).getFramesByClassType !== "function") {
+        throw new Error("Impossible d'obtenir le tag ID3v2");
+      }
+      const id3Tag = tag as Id3v2Tag;
 
-    const frames = id3Tag.getFramesByClassType<UserTextInformationFrame>(
-      FrameClassType.UserTextInformationFrame,
-    );
-    const existing = UserTextInformationFrame.findUserTextInformationFrame(
-      frames,
-      TRACKS_PROFILE_TXXX_DESCRIPTION,
-      true,
-    );
-    if (existing) {
-      id3Tag.removeFrame(existing);
+      const frames = id3Tag.getFramesByClassType<UserTextInformationFrame>(
+        FrameClassType.UserTextInformationFrame,
+      );
+      const existing = UserTextInformationFrame.findUserTextInformationFrame(
+        frames,
+        fieldName,
+        true,
+      );
+      if (existing) {
+        id3Tag.removeFrame(existing);
+      }
+
+      const frame = UserTextInformationFrame.fromDescription(fieldName);
+      frame.text = [json];
+      id3Tag.addFrame(frame);
+    } else {
+      const xiph = file.getTag(
+        TagTypes.Xiph,
+        true,
+      ) as unknown as XiphWritable;
+      if (!xiph?.removeField || !xiph.setFieldAsStrings) {
+        throw new Error("Impossible d'obtenir le commentaire Vorbis/FLAC");
+      }
+      xiph.removeField(fieldName);
+      xiph.setFieldAsStrings(fieldName, json);
     }
 
-    const frame = UserTextInformationFrame.fromDescription(TRACKS_PROFILE_TXXX_DESCRIPTION);
-    frame.text = [json];
-    id3Tag.addFrame(frame);
     file.save();
   } finally {
-    file?.dispose();
+    file.dispose();
   }
 }
