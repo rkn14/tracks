@@ -1,4 +1,10 @@
-import type { ElectronApi, PanelState } from "@shared/types";
+import type {
+  DjSyncTreeNode,
+  ElectronApi,
+  LibraryPlaylistAnalysisResult,
+  LibraryTrackSyncIssue,
+  PanelState,
+} from "@shared/types";
 import { STORE_KEYS } from "@shared/constants";
 import {
   getProfileTagLabel,
@@ -22,6 +28,14 @@ import {
   normalizeLibraryExcludePaths,
   parseStoredLibraryExcludePaths,
 } from "@shared/library-exclude-paths";
+import type { TrackIssueFolderNode } from "./lib/sync-track-issues";
+import {
+  buildTrackIssueFolderTree,
+  folderNodeHasTrackIssues,
+  pathBasename,
+  sortFolderChildKeys,
+} from "./lib/sync-track-issues";
+import { contextMenu, type ContextMenuEntry } from "./components/context-menu";
 declare global {
   interface Window {
     electronApi: ElectronApi;
@@ -432,33 +446,518 @@ export async function initApp(): Promise<void> {
     else rightPanel.refresh();
   });
 
-  // ── Analyse provisoire Library ↔ playlists (Engine DJ) ──
-  const libraryAnalyzeBtn = document.getElementById("btn-library-analyze");
-  const libraryAnalyzeOverlay = document.getElementById("library-analyze-overlay");
-  const libraryAnalyzeText = document.getElementById("library-analyze-text");
-  const closeLibraryAnalyze = (): void => {
-    libraryAnalyzeOverlay?.setAttribute("hidden", "");
-  };
-  document.getElementById("library-analyze-close")?.addEventListener("click", closeLibraryAnalyze);
-  libraryAnalyzeOverlay?.addEventListener("click", (e) => {
-    if (e.target === libraryAnalyzeOverlay) closeLibraryAnalyze();
-  });
-  libraryAnalyzeOverlay?.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeLibraryAnalyze();
-  });
-  libraryAnalyzeBtn?.addEventListener("click", async () => {
-    libraryAnalyzeBtn.setAttribute("disabled", "");
-    try {
-      const r = await electronApi.engineDj.analyzeLibraryPlaylists();
-      if (libraryAnalyzeText) {
-        libraryAnalyzeText.textContent = r.lines.join("\n");
+  // ── SYNC (même analyse `djDbAnalyzeLibraryVsPlaylists` : listes + rapport texte) ──
+  const syncBtn = document.getElementById("btn-library-analyze");
+  const syncOverlay = document.getElementById("sync-overlay");
+  const syncLoading = document.getElementById("sync-loading");
+  const syncContent = document.getElementById("sync-content");
+  const syncError = document.getElementById("sync-error");
+  const syncWarningsBlock = document.getElementById("sync-warnings-block");
+  const syncWarningsList = document.getElementById("sync-warnings-list");
+  const syncMissingPlaylists = document.getElementById("sync-missing-playlists");
+  const syncMissingPlaylistsEmpty = document.getElementById("sync-missing-playlists-empty");
+  const syncTrackIssues = document.getElementById("sync-track-issues");
+  const syncTrackIssuesEmpty = document.getElementById("sync-track-issues-empty");
+  const syncDbTree = document.getElementById("sync-db-tree");
+  const syncDbOrphanPlaylists = document.getElementById(
+    "sync-db-orphan-playlists",
+  );
+  const syncDbOrphanTracks = document.getElementById("sync-db-orphan-tracks");
+  const syncDbOrphanPlEmpty = document.getElementById(
+    "sync-db-orphan-pl-empty",
+  );
+  const syncDbOrphanTracksEmpty = document.getElementById(
+    "sync-db-orphan-tracks-empty",
+  );
+
+  const renderSyncDbTreeNode = (n: DjSyncTreeNode): HTMLLIElement => {
+    const li = document.createElement("li");
+    li.className = "sync-db-tree__node";
+
+    const hasExpandableContent =
+      n.trackFileNames.length > 0 || n.children.length > 0;
+
+    if (hasExpandableContent) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "sync-db-tree__row";
+      row.setAttribute("aria-expanded", "false");
+
+      const chevron = document.createElement("span");
+      chevron.className = "sync-db-tree__chevron";
+      chevron.setAttribute("aria-hidden", "true");
+
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "sync-db-tree__playlist-title";
+      titleSpan.textContent = n.title;
+
+      row.append(chevron, titleSpan);
+
+      const body = document.createElement("div");
+      body.className = "sync-db-tree__node-body";
+      body.hidden = true;
+
+      for (let i = 0; i < n.trackFileNames.length; i++) {
+        const tr = document.createElement("div");
+        tr.className = "sync-db-tree__track";
+        tr.textContent = n.trackFileNames[i]!;
+        const ap = n.trackAbsPaths[i];
+        if (ap) tr.setAttribute("data-explorer-path", ap);
+        body.appendChild(tr);
       }
-      libraryAnalyzeOverlay?.removeAttribute("hidden");
-      libraryAnalyzeOverlay?.focus();
-    } finally {
-      libraryAnalyzeBtn.removeAttribute("disabled");
+      if (n.children.length) {
+        const ul = document.createElement("ul");
+        ul.className = "sync-db-tree__list sync-db-tree__list--nested";
+        for (const c of n.children) {
+          ul.appendChild(renderSyncDbTreeNode(c));
+        }
+        body.appendChild(ul);
+      }
+
+      li.append(row, body);
+    } else {
+      const row = document.createElement("div");
+      row.className = "sync-db-tree__row sync-db-tree__row--leaf";
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "sync-db-tree__playlist-title";
+      titleSpan.textContent = n.title;
+      row.appendChild(titleSpan);
+      li.appendChild(row);
     }
+
+    return li;
+  };
+
+  const renderSyncDbTree = (
+    container: HTMLElement,
+    nodes: DjSyncTreeNode[],
+  ): void => {
+    container.replaceChildren();
+    if (nodes.length === 0) {
+      const p = document.createElement("p");
+      p.className = "sync-list-empty";
+      p.textContent = "Aucune playlist";
+      container.appendChild(p);
+      return;
+    }
+    const ul = document.createElement("ul");
+    ul.className = "sync-db-tree__list";
+    ul.setAttribute("role", "group");
+    for (const n of nodes) {
+      ul.appendChild(renderSyncDbTreeNode(n));
+    }
+    container.appendChild(ul);
+  };
+
+  syncDbTree?.addEventListener("click", (e) => {
+    const row = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      "button.sync-db-tree__row",
+    );
+    if (!row || !syncDbTree?.contains(row)) return;
+    const body = row.nextElementSibling;
+    if (!body || !body.classList.contains("sync-db-tree__node-body")) return;
+    const expanded = row.getAttribute("aria-expanded") === "true";
+    const next = !expanded;
+    row.setAttribute("aria-expanded", String(next));
+    (body as HTMLElement).hidden = !next;
   });
+
+  const formatTrackIssueMeta = (t: LibraryTrackSyncIssue): string =>
+    t.kind === "not_in_playlist"
+      ? `Piste en base, absente de la playlist — trackId ${t.trackId}, listId ${t.listId}`
+      : "";
+
+  const renderTrackIssueFileRow = (t: LibraryTrackSyncIssue): HTMLLIElement => {
+    const li = document.createElement("li");
+    li.className = "sync-lib-issues-file";
+    li.title = t.filePath;
+    li.setAttribute("data-explorer-path", t.filePath);
+    li.dataset.listId = String(t.listId);
+    const textCol = document.createElement("div");
+    textCol.className = "sync-lib-issues-file__text";
+    const nameEl = document.createElement("span");
+    nameEl.className = "sync-list__path";
+    nameEl.textContent = pathBasename(t.filePath);
+    textCol.appendChild(nameEl);
+    const metaLine = formatTrackIssueMeta(t);
+    if (metaLine) {
+      const meta = document.createElement("span");
+      meta.className = "sync-list__meta";
+      meta.textContent = metaLine;
+      textCol.appendChild(meta);
+    }
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className =
+      "sync-btn-add-to-db sync-btn-add-issues-file sync-btn-add-to-db--compact dialog-btn dialog-btn--primary";
+    addBtn.textContent = "add track to database";
+    li.append(textCol, addBtn);
+    return li;
+  };
+
+  const renderTrackIssueFolderNode = (
+    node: TrackIssueFolderNode,
+  ): HTMLLIElement => {
+    const li = document.createElement("li");
+    li.className = "sync-lib-issues-node";
+    const header = document.createElement("div");
+    header.className = "sync-lib-issues-folder-header";
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "sync-lib-issues-folder-row";
+    row.setAttribute("aria-expanded", "true");
+    const chev = document.createElement("span");
+    chev.className = "sync-db-tree__chevron";
+    chev.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.className = "sync-lib-issues-folder-label";
+    label.textContent = node.segment;
+    row.append(chev, label);
+    header.appendChild(row);
+    if (folderNodeHasTrackIssues(node)) {
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className =
+        "sync-btn-add-to-db sync-btn-add-issues-folder sync-btn-add-to-db--compact dialog-btn dialog-btn--primary";
+      addBtn.textContent = "add tracks to database";
+      header.appendChild(addBtn);
+    }
+    const body = document.createElement("div");
+    body.className = "sync-lib-issues-folder-body";
+    const inner = document.createElement("ul");
+    inner.className = "sync-lib-issues-nested";
+    for (const k of sortFolderChildKeys(node.children)) {
+      const ch = node.children.get(k);
+      if (ch) inner.appendChild(renderTrackIssueFolderNode(ch));
+    }
+    for (const issue of node.files) {
+      inner.appendChild(renderTrackIssueFileRow(issue));
+    }
+    body.appendChild(inner);
+    li.append(header, body);
+    return li;
+  };
+
+  const renderTrackIssuesTree = (
+    container: HTMLUListElement,
+    issues: LibraryTrackSyncIssue[],
+  ): void => {
+    container.replaceChildren();
+    if (issues.length === 0) return;
+    const root = buildTrackIssueFolderTree(issues);
+    for (const k of sortFolderChildKeys(root.children)) {
+      const n = root.children.get(k);
+      if (n) container.appendChild(renderTrackIssueFolderNode(n));
+    }
+    for (const t of root.files) {
+      container.appendChild(renderTrackIssueFileRow(t));
+    }
+  };
+
+  syncTrackIssues?.addEventListener("click", (e) => {
+    const addFileBtn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      "button.sync-btn-add-issues-file",
+    );
+    if (addFileBtn && syncTrackIssues?.contains(addFileBtn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const fileLi = addFileBtn.closest<HTMLLIElement>("li.sync-lib-issues-file");
+      const p = fileLi?.getAttribute("data-explorer-path");
+      const listIdS = fileLi?.dataset?.listId;
+      if (!p || listIdS == null) return;
+      const listId = parseInt(listIdS, 10);
+      if (!Number.isFinite(listId)) return;
+      void importTrackIssueBatches(
+        [{ listId, filePaths: [p] }],
+        addFileBtn,
+      );
+      return;
+    }
+    const addFolderBtn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      "button.sync-btn-add-issues-folder",
+    );
+    if (addFolderBtn && syncTrackIssues?.contains(addFolderBtn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrap = addFolderBtn.closest("li.sync-lib-issues-node");
+      const body = wrap?.querySelector(".sync-lib-issues-folder-body");
+      if (!body) return;
+      const fileLis = body.querySelectorAll<HTMLLIElement>(".sync-lib-issues-file");
+      const byList = new Map<number, string[]>();
+      for (const li of fileLis) {
+        const fp = li.getAttribute("data-explorer-path");
+        const listIdS = li.dataset.listId;
+        if (!fp || listIdS == null) continue;
+        const id = parseInt(listIdS, 10);
+        if (!Number.isFinite(id)) continue;
+        let arr = byList.get(id);
+        if (!arr) {
+          arr = [];
+          byList.set(id, arr);
+        }
+        if (!arr.includes(fp)) arr.push(fp);
+      }
+      if (byList.size === 0) return;
+      const batches = [...byList.entries()].map(
+        ([listId, filePaths]) => ({
+          listId,
+          filePaths,
+        }),
+      );
+      void importTrackIssueBatches(batches, addFolderBtn);
+      return;
+    }
+    const row = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      "button.sync-lib-issues-folder-row",
+    );
+    if (!row || !syncTrackIssues?.contains(row)) return;
+    const li = row.closest("li.sync-lib-issues-node");
+    const body = li?.querySelector(".sync-lib-issues-folder-body");
+    if (!body || !body.classList.contains("sync-lib-issues-folder-body")) return;
+    const expanded = row.getAttribute("aria-expanded") === "true";
+    const next = !expanded;
+    row.setAttribute("aria-expanded", String(next));
+    (body as HTMLElement).hidden = !next;
+  });
+
+  const closeSync = (): void => {
+    syncOverlay?.setAttribute("hidden", "");
+  };
+
+  const fillSyncFromResult = (r: LibraryPlaylistAnalysisResult): void => {
+    const missing = r.missingPlaylists ?? [];
+    const issues = r.trackIssues ?? [];
+    const warnings = r.warnings ?? [];
+    const dbTree = r.dbPlaylistTree ?? [];
+    const orphanPl = r.dbPlaylistsNotInLibrary ?? [];
+    const orphanTr = r.dbTracksNotInLibrary ?? [];
+
+    if (syncDbTree) {
+      renderSyncDbTree(syncDbTree, dbTree);
+    }
+
+    if (syncDbOrphanPlaylists && syncDbOrphanPlEmpty) {
+      syncDbOrphanPlaylists.replaceChildren();
+      for (const p of orphanPl) {
+        const li = document.createElement("li");
+        li.textContent = p.labelPath;
+        syncDbOrphanPlaylists.appendChild(li);
+      }
+      syncDbOrphanPlEmpty.toggleAttribute("hidden", orphanPl.length > 0);
+    }
+
+    if (syncDbOrphanTracks && syncDbOrphanTracksEmpty) {
+      syncDbOrphanTracks.replaceChildren();
+      for (const t of orphanTr) {
+        const li = document.createElement("li");
+        li.textContent = t.fileName;
+        if (t.absPath) li.setAttribute("data-explorer-path", t.absPath);
+        syncDbOrphanTracks.appendChild(li);
+      }
+      syncDbOrphanTracksEmpty.toggleAttribute("hidden", orphanTr.length > 0);
+    }
+
+    if (syncWarningsBlock && syncWarningsList) {
+      syncWarningsList.replaceChildren();
+      if (warnings.length) {
+        syncWarningsBlock.removeAttribute("hidden");
+        for (const w of warnings) {
+          const li = document.createElement("li");
+          li.textContent = w;
+          syncWarningsList.appendChild(li);
+        }
+      } else {
+        syncWarningsBlock.setAttribute("hidden", "");
+      }
+    }
+
+    if (syncMissingPlaylists && syncMissingPlaylistsEmpty) {
+      syncMissingPlaylists.replaceChildren();
+      for (const p of missing) {
+        const li = document.createElement("li");
+        li.className = "sync-missing-row";
+        li.setAttribute("data-explorer-path", p.absPath);
+        const textCol = document.createElement("div");
+        textCol.className = "sync-missing-row__text";
+        const pathEl = document.createElement("span");
+        pathEl.className = "sync-list__path";
+        pathEl.textContent = p.absPath;
+        textCol.appendChild(pathEl);
+        if (p.fileCount > 0) {
+          const meta = document.createElement("span");
+          meta.className = "sync-list__meta";
+          meta.textContent = `${p.fileCount} fichier(s) audio dans ce dossier`;
+          textCol.appendChild(meta);
+        }
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className =
+          "sync-btn-add-to-db sync-btn-add-to-db--compact dialog-btn dialog-btn--primary";
+        addBtn.textContent = "add tracks to database";
+        addBtn.dataset.folderPath = p.absPath;
+        li.append(textCol, addBtn);
+        syncMissingPlaylists.appendChild(li);
+      }
+      syncMissingPlaylistsEmpty.toggleAttribute("hidden", missing.length > 0);
+    }
+
+    if (syncTrackIssues && syncTrackIssuesEmpty) {
+      renderTrackIssuesTree(
+        syncTrackIssues as HTMLUListElement,
+        issues,
+      );
+      syncTrackIssuesEmpty.toggleAttribute("hidden", issues.length > 0);
+    }
+  };
+
+  async function importTrackIssueBatches(
+    batches: { listId: number; filePaths: string[] }[],
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    syncError?.setAttribute("hidden", "");
+    if (syncError) syncError.textContent = "";
+    button.disabled = true;
+    try {
+      const res = await electronApi.engineDj.importTrackBatchToPlaylists({
+        batches,
+      });
+      if (!res.ok) {
+        if (syncError) {
+          syncError.textContent =
+            res.error ?? "Import des pistes en base impossible.";
+          syncError.removeAttribute("hidden");
+        }
+        return;
+      }
+      if (res.failures.length && syncError) {
+        const lines = res.failures
+          .slice(0, 8)
+          .map((f) => `${f.path} (playlist ${f.listId}) : ${f.error}`);
+        syncError.textContent = [
+          `${res.added} piste(s) traitée(s). ${res.failures.length} échec(s) :`,
+          ...lines,
+          res.failures.length > 8 ? "…" : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        syncError.removeAttribute("hidden");
+      }
+      await playlistsPanel.reconnect();
+      const r = await electronApi.engineDj.analyzeLibraryPlaylists();
+      if (!r.ok) {
+        if (syncError) {
+          syncError.textContent = r.error ?? r.lines.join("\n");
+          syncError.removeAttribute("hidden");
+        }
+        return;
+      }
+      fillSyncFromResult(r);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  syncMissingPlaylists?.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      ".sync-btn-add-to-db",
+    );
+    if (!btn || !syncMissingPlaylists?.contains(btn)) return;
+    const folderPath = btn.dataset.folderPath;
+    if (!folderPath) return;
+    void (async () => {
+      syncError?.setAttribute("hidden", "");
+      if (syncError) syncError.textContent = "";
+      btn.disabled = true;
+      try {
+        const res = await electronApi.engineDj.ensureLibraryPlaylist({
+          folderAbsPath: folderPath,
+        });
+        if (!res.ok) {
+          if (syncError) {
+            syncError.textContent =
+              res.error ?? "Échec de la création de la (des) playlist(s).";
+            syncError.removeAttribute("hidden");
+          }
+          return;
+        }
+        await playlistsPanel.reconnect();
+        const r = await electronApi.engineDj.analyzeLibraryPlaylists();
+        if (!r.ok) {
+          if (syncError) {
+            syncError.textContent = r.error ?? r.lines.join("\n");
+            syncError.removeAttribute("hidden");
+          }
+          return;
+        }
+        fillSyncFromResult(r);
+      } finally {
+        btn.disabled = false;
+      }
+    })();
+  });
+
+  const openSync = (): void => {
+    syncOverlay?.removeAttribute("hidden");
+    syncLoading?.removeAttribute("hidden");
+    syncContent?.setAttribute("hidden", "");
+    syncError?.setAttribute("hidden", "");
+    if (syncError) syncError.textContent = "";
+    syncOverlay?.focus();
+
+    void (async () => {
+      syncBtn?.setAttribute("disabled", "");
+      try {
+        const r = await electronApi.engineDj.analyzeLibraryPlaylists();
+        syncLoading?.setAttribute("hidden", "");
+        if (!r.ok) {
+          if (syncError) {
+            syncError.textContent = r.error ?? r.lines.join("\n");
+            syncError.removeAttribute("hidden");
+          }
+          return;
+        }
+        fillSyncFromResult(r);
+        syncContent?.removeAttribute("hidden");
+      } catch (e) {
+        syncLoading?.setAttribute("hidden", "");
+        if (syncError) {
+          syncError.textContent = e instanceof Error ? e.message : String(e);
+          syncError.removeAttribute("hidden");
+        }
+      } finally {
+        syncBtn?.removeAttribute("disabled");
+      }
+    })();
+  };
+
+  document.getElementById("sync-close")?.addEventListener("click", closeSync);
+  syncOverlay?.addEventListener("contextmenu", (e) => {
+    if (syncOverlay?.hasAttribute("hidden")) return;
+    const el = (e.target as HTMLElement).closest<HTMLElement>(
+      "[data-explorer-path]",
+    );
+    const pathToShow = el?.getAttribute("data-explorer-path")?.trim();
+    if (!pathToShow) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const items: ContextMenuEntry[] = [
+      {
+        label: "Afficher dans l'Explorateur",
+        action: () => {
+          electronApi.fs.showInExplorer(pathToShow);
+        },
+      },
+    ];
+    contextMenu.show(items, e.clientX, e.clientY);
+  });
+
+  syncOverlay?.addEventListener("click", (e) => {
+    if (e.target === syncOverlay) closeSync();
+  });
+  syncOverlay?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeSync();
+  });
+  syncBtn?.addEventListener("click", openSync);
 
   // ── Audio player ─────────────────────────────
   new AudioPlayer(document.getElementById("player-section")!);

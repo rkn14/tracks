@@ -109,6 +109,16 @@ const electronApi: ElectronApi = {
       ),
     analyzeLibraryPlaylists: () =>
       ipcRenderer.invoke(IpcChannel.ENGINE_DJ_DB_ANALYZE_LIBRARY_PLAYLISTS),
+    ensureLibraryPlaylist: (params) =>
+      ipcRenderer.invoke(
+        IpcChannel.ENGINE_DJ_DB_ENSURE_LIBRARY_PLAYLIST,
+        params,
+      ),
+    importTrackBatchToPlaylists: (params) =>
+      ipcRenderer.invoke(
+        IpcChannel.ENGINE_DJ_DB_IMPORT_TRACK_BATCH_TO_PLAYLISTS,
+        params,
+      ),
   },
 };
 

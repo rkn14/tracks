@@ -2,13 +2,18 @@ import { statSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import Database from "better-sqlite3";
+import { parseFile } from "music-metadata";
+import type { IAudioMetadata, ICommonTagsResult } from "music-metadata";
 import { STORE_KEYS } from "@shared/constants";
 import type {
   DjAddLibraryFilesToPlaylistResult,
   DjAddPlaylistResult,
   DjAddTrackToPlaylistResult,
   DjDbConnectResult,
+  DjImportTrackBatchToPlaylistsResult,
+  DjSyncTreeNode,
   LibraryPlaylistAnalysisResult,
+  LibraryTrackSyncIssue,
   DjPlaylistNode,
   DjPlaylistTrackMutationResult,
   DjPlaylistTrackRow,
@@ -228,6 +233,94 @@ function orderPlaylistTracksByNextEntity(
   return ordered.map(({ nextEntityId: _n, ...r }) => r);
 }
 
+function getPlaylistTrackNamesAndAbsPathsOrdered(
+  d: SqliteDatabase,
+  listId: number,
+  libraryRootAbs: string,
+): { names: string[]; absPaths: string[] } {
+  const rows = d
+    .prepare(
+      `SELECT pe.id AS entityId, pe.nextEntityId AS nextEntityId,
+              t.id AS trackId, t.title, t.artist, t.path, t.filename
+       FROM PlaylistEntity pe
+       JOIN Track t ON t.id = pe.trackId
+       WHERE pe.listId = ?`,
+    )
+    .all(listId) as PlaylistTrackQueryRow[];
+  const ordered = orderPlaylistTracksByNextEntity(rows);
+  const root = path.resolve(libraryRootAbs);
+  return {
+    names: ordered.map((r) => {
+      const fn = (r.filename ?? "").trim();
+      if (fn) return fn;
+      const p = (r.path ?? "").trim();
+      if (p) {
+        const base = path.basename(p.replace(/\\/g, path.sep));
+        if (base) return base;
+      }
+      return "Sans nom";
+    }),
+    absPaths: ordered.map((r) => {
+      const abs = resolveTrackAbsoluteFromRow(root, r.path, r.filename);
+      return abs ? path.normalize(abs) : "";
+    }),
+  };
+}
+
+function buildDbSyncTreeNodes(
+  d: SqliteDatabase,
+  nodes: DjPlaylistNode[],
+  libraryRootAbs: string,
+): DjSyncTreeNode[] {
+  return nodes.map((n) => {
+    const { names, absPaths } = getPlaylistTrackNamesAndAbsPathsOrdered(
+      d,
+      n.id,
+      libraryRootAbs,
+    );
+    return {
+      id: n.id,
+      title: n.title?.trim() || "Sans titre",
+      children: buildDbSyncTreeNodes(d, n.children, libraryRootAbs),
+      trackFileNames: names,
+      trackAbsPaths: absPaths,
+    };
+  });
+}
+
+function collectDbTracksNotInLibrary(
+  d: SqliteDatabase,
+  libraryRoot: string,
+): { trackId: number; fileName: string; absPath: string }[] {
+  const root = path.resolve(libraryRoot.trim());
+  const rows = d
+    .prepare("SELECT id, path, filename FROM Track")
+    .all() as { id: number; path: string | null; filename: string | null }[];
+  const out: { trackId: number; fileName: string; absPath: string }[] = [];
+  for (const t of rows) {
+    const abs = resolveTrackAbsoluteFromRow(root, t.path, t.filename);
+    let underLib = false;
+    if (abs) {
+      const rel = path.relative(root, path.normalize(abs));
+      underLib = !rel.startsWith("..") && !path.isAbsolute(rel);
+    }
+    if (underLib) continue;
+    const f =
+      (t.filename ?? "").trim() ||
+      (t.path ? path.basename(t.path.trim()) : "") ||
+      "Sans nom";
+    out.push({
+      trackId: t.id,
+      fileName: f,
+      absPath: abs ? path.normalize(abs) : "",
+    });
+  }
+  out.sort((a, b) =>
+    a.fileName.localeCompare(b.fileName, "fr", { sensitivity: "base" }),
+  );
+  return out;
+}
+
 export async function djDbGetPlaylistTracks(
   listId: number,
 ): Promise<DjPlaylistTrackRow[]> {
@@ -318,6 +411,116 @@ export function djDbAddChildPlaylist(
     })();
 
     return { ok: true, id: nextId };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Playlists racine : `parentListId = 0` (comme le script `Add New Tracks.py` / Engine DJ).
+ */
+export function djDbAddRootPlaylist(title: string): DjAddPlaylistResult {
+  try {
+    const d = requireDb();
+    const t = title.trim();
+    if (!t) {
+      return { ok: false, error: "Titre vide" };
+    }
+    const now = sqlNow();
+    const nextId = d.transaction(() => {
+      const { nextId: nid } = d
+        .prepare("SELECT COALESCE(MAX(id), 0) + 1 AS nextId FROM Playlist")
+        .get() as { nextId: number };
+
+      d.prepare(
+        `INSERT INTO Playlist (id, title, parentListId, isPersisted, nextListId, lastEditTime, isExplicitlyExported)
+         VALUES (?, ?, 0, 1, 0, ?, 0)`,
+      ).run(nid, t, now);
+
+      const seqRow = d
+        .prepare("SELECT seq FROM sqlite_sequence WHERE name = 'Playlist'")
+        .get() as { seq: number } | undefined;
+      if (seqRow) {
+        d.prepare(
+          "UPDATE sqlite_sequence SET seq = ? WHERE name = 'Playlist'",
+        ).run(nid);
+      }
+
+      return nid;
+    })();
+
+    return { ok: true, id: nextId };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg };
+  }
+}
+
+function findPlaylistIdByParentAndTitle(
+  d: SqliteDatabase,
+  parentListId: number,
+  title: string,
+): number | null {
+  const t = title.trim();
+  const row = d
+    .prepare(
+      `SELECT id FROM Playlist
+       WHERE parentListId = ? AND LOWER(TRIM(COALESCE(title, ''))) = LOWER(?)
+       LIMIT 1`,
+    )
+    .get(parentListId, t) as { id: number } | undefined;
+  return row?.id ?? null;
+}
+
+/**
+ * Crée au besoin toute la chaîne de playlists (titre = nom de chaque segment du chemin
+ * relatif à la Library), comme l’analyse SYNC.
+ */
+export async function djDbEnsurePlaylistForLibraryFolder(
+  folderAbsPath: string,
+): Promise<DjAddPlaylistResult> {
+  const libraryRoot = (await storeGet<string>(STORE_KEYS.LIBRARY_FOLDER))?.trim() ?? "";
+  if (!libraryRoot) {
+    return { ok: false, error: "Dossier Library non configuré (Paramètres)." };
+  }
+  const conn = await djDbConnectFromStore();
+  if (!conn.ok) {
+    return {
+      ok: false,
+      error: conn.error ?? "Base Engine DJ : connexion impossible.",
+    };
+  }
+  const root = path.resolve(libraryRoot);
+  const abs = path.resolve(folderAbsPath);
+  const rel = path.relative(root, abs);
+  if (!rel || rel.startsWith("..")) {
+    return { ok: false, error: "Le dossier n’est pas sous le dossier Library." };
+  }
+  const parts = rel.split(path.sep).filter((p) => p.length > 0);
+  if (parts.length === 0) {
+    return { ok: false, error: "Dossier racine Library : aucune playlist à associer." };
+  }
+
+  try {
+    const d = requireDb();
+    let parentId = 0;
+    for (const segment of parts) {
+      const found = findPlaylistIdByParentAndTitle(d, parentId, segment);
+      if (found != null) {
+        parentId = found;
+        continue;
+      }
+      const res =
+        parentId === 0
+          ? djDbAddRootPlaylist(segment)
+          : djDbAddChildPlaylist(parentId, segment);
+      if (!res.ok || res.id == null) {
+        return { ok: false, error: res.error ?? "Création de playlist refusée." };
+      }
+      parentId = res.id;
+    }
+    return { ok: true, id: parentId };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: msg };
@@ -761,6 +964,352 @@ export async function djDbAddLibraryFilesToPlaylist(
   }
 }
 
+function getDefaultAlbumArtId(d: SqliteDatabase): number {
+  const row = d
+    .prepare("SELECT id FROM AlbumArt LIMIT 1")
+    .get() as { id: number } | undefined;
+  return row?.id ?? 1;
+}
+
+const META_TEXT_MAX = 2000;
+
+function strMeta(s: string | null | undefined): string | null {
+  if (s == null) return null;
+  const t = s.trim();
+  if (!t) return null;
+  return t.length > META_TEXT_MAX ? t.slice(0, META_TEXT_MAX) : t;
+}
+
+function joinStringList(
+  parts: string[] | undefined,
+  separator: string,
+): string | null {
+  if (!parts?.length) return null;
+  const out = parts.map((p) => p?.trim()).filter(Boolean);
+  if (!out.length) return null;
+  const s = out.join(separator);
+  return strMeta(s);
+}
+
+/**
+ * Titre normalisé d’une entrée `ICommonTagsResult['comment']` (liseuses ID3, etc.).
+ */
+function commentListToString(
+  comments: ICommonTagsResult["comment"] | undefined,
+): string | null {
+  if (!comments?.length) return null;
+  const textParts: string[] = [];
+  for (const c of comments) {
+    if (c == null) continue;
+    const raw =
+      typeof c === "object" && c !== null && "text" in c
+        ? (c as { text?: unknown }).text
+        : c;
+    const t = String(raw ?? "")
+      .trim();
+    if (t) textParts.push(t);
+  }
+  if (!textParts.length) return null;
+  return strMeta(textParts.join(" | "));
+}
+
+function artistFromCommon(c: ICommonTagsResult): string | null {
+  if (c.artists?.length) {
+    return joinStringList(c.artists, " / ");
+  }
+  return strMeta(c.artist);
+}
+
+function yearFromCommon(c: ICommonTagsResult): number {
+  if (c.year != null && Number.isFinite(c.year) && c.year > 0) {
+    return Math.min(3000, Math.max(0, Math.floor(c.year)));
+  }
+  const d = c.date?.trim() ?? c.releasedate?.trim() ?? c.originaldate?.trim();
+  if (d) {
+    const m = /^(\d{4})/.exec(d);
+    if (m) {
+      const y = parseInt(m[1]!, 10);
+      if (Number.isFinite(y) && y > 0) return Math.min(3000, y);
+    }
+  }
+  if (c.originalyear != null && Number.isFinite(c.originalyear) && c.originalyear > 0) {
+    return Math.min(3000, Math.floor(c.originalyear));
+  }
+  return 0;
+}
+
+function ratingFromCommon(c: ICommonTagsResult): number {
+  const r0 = c.rating?.[0];
+  const v = r0?.rating;
+  if (v == null || !Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, Math.round(v * 100)));
+}
+
+/**
+ * Insère une entrée `Track` pour un fichier sous Library (métadonnées légères) puis
+ * `findTrackIdForLibraryFile` la retrouve.
+ */
+async function insertNewTrackForLibraryFile(
+  d: SqliteDatabase,
+  libraryRoot: string,
+  absFile: string,
+): Promise<{ ok: true; trackId: number } | { ok: false; error: string }> {
+  const root = path.resolve(libraryRoot.trim());
+  const abs = path.resolve(absFile);
+  const rel = path.relative(root, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return { ok: false, error: "Fichier hors du dossier Library." };
+  }
+  const relFwd = rel.replace(/\\/g, "/");
+  const filename = path.basename(abs);
+  /**
+   * `path` = chemin relatif complet (sous Library), avec `/`, comme le 1er couple de
+   * `candidatePathFilenamePairs` + `findTrackIdForLibraryFile`. Ne pas n’y mettre que
+   * le dossier : une UNIQUE sur `Track.path` ferait échouer toutes les pistes d’un
+   * même répertoire (conflit) ou empêcherait de retrouver les lignes importées
+   * ailleurs.
+   */
+  const pathCol = relFwd;
+  const ext = path.extname(filename).replace(/^\./, "").toLowerCase();
+  const fileType = ext || "mp3";
+
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(abs);
+  } catch {
+    return { ok: false, error: "Fichier introuvable sur disque." };
+  }
+  if (!st.isFile()) {
+    return { ok: false, error: "Ce n'est pas un fichier." };
+  }
+
+  let mm: IAudioMetadata | null = null;
+  try {
+    mm = await parseFile(abs, { skipCovers: true });
+  } catch {
+    mm = null;
+  }
+
+  const common = mm?.common;
+  const format = mm?.format;
+
+  let lengthSec = 0;
+  if (format?.duration != null) {
+    lengthSec = Math.max(0, Math.round(format.duration));
+  }
+  let bitrate: number | null = null;
+  if (format?.bitrate != null) {
+    bitrate = Math.round(format.bitrate / 1000) || null;
+  }
+
+  const title =
+    (common?.title?.trim() && common.title.trim()) || filename;
+  const artist = common ? artistFromCommon(common) : null;
+  const album = strMeta(common?.album);
+  const genre = joinStringList(common?.genre, ", ");
+  const comment = common ? commentListToString(common.comment) : null;
+  const label = strMeta(common?.label?.[0]);
+  const composer = joinStringList(common?.composer, " / ");
+  const remixer = joinStringList(common?.remixer, " / ");
+
+  const year = common ? yearFromCommon(common) : 0;
+  let bpm = 0;
+  if (common?.bpm != null && Number.isFinite(common.bpm)) {
+    bpm = Math.max(0, Math.round(common.bpm));
+  }
+  const bpmAnalyzed =
+    bpm > 0 ? bpm : null;
+  const rating = common ? ratingFromCommon(common) : 0;
+  const keyId = 0;
+  const titleNorm = strMeta(title) ?? title;
+  const hasTextMeta = Boolean(
+    (common?.title != null && common.title !== filename) ||
+      artist ||
+      album ||
+      genre ||
+      comment ||
+      label ||
+      composer ||
+      remixer ||
+      bpm > 0 ||
+      year > 0 ||
+      rating > 0,
+  );
+
+  const now = sqlNow();
+  const originUuid = getInformationDatabaseUuid(d);
+  if (!originUuid) {
+    return { ok: false, error: "UUID de base (Information) introuvable." };
+  }
+  const albumArtId = getDefaultAlbumArtId(d);
+  const fileBytes = st.size;
+  const bitRateCol = bitrate ?? 0;
+
+  try {
+    const run = d
+      .prepare(
+        `INSERT INTO Track (
+         playOrder, length, bpm, year, path, filename, bitrate, bpmAnalyzed, albumArtId, fileBytes,
+         title, artist, album, genre, comment, label, composer, remixer, key, rating, albumArt,
+         timeLastPlayed, isPlayed, fileType, isAnalyzed, dateCreated, dateAdded, isAvailable,
+         isMetadataOfPackedTrackChanged, isPerfomanceDataOfPackedTrackChanged, playedIndicator, isMetadataImported, pdbImportKey, streamingSource, uri, isBeatGridLocked, originDatabaseUuid, originTrackId, streamingFlags, explicitLyrics, lastEditTime
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        null,
+        lengthSec,
+        bpm,
+        year,
+        pathCol,
+        filename,
+        bitRateCol,
+        bpmAnalyzed,
+        albumArtId,
+        fileBytes,
+        titleNorm,
+        artist,
+        album,
+        genre,
+        comment,
+        label,
+        composer,
+        remixer,
+        keyId,
+        rating,
+        null,
+        null,
+        0,
+        fileType,
+        0,
+        now,
+        now,
+        1,
+        0,
+        0,
+        0,
+        hasTextMeta || bpm > 0 || year > 0 || rating > 0 ? 1 : 0,
+        0,
+        null,
+        null,
+        0,
+        originUuid,
+        null,
+        0,
+        0,
+        now,
+      );
+    const id = Number(run.lastInsertRowid);
+    if (!id || !Number.isFinite(id)) {
+      return { ok: false, error: "Insertion Track : id invalide." };
+    }
+    return { ok: true, trackId: id };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (
+      /UNIQUE constraint failed/i.test(msg) &&
+      /Track\.path/i.test(msg)
+    ) {
+      const again = findTrackIdForLibraryFile(d, libraryRoot, abs);
+      if (again != null) {
+        return { ok: true, trackId: again };
+      }
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Pour chaque lot : résout ou importe chaque piste, puis l’ajoute à la playlist `listId`.
+ */
+export async function djDbImportTrackBatchToPlaylists(
+  batches: { listId: number; filePaths: string[] }[],
+): Promise<DjImportTrackBatchToPlaylistsResult> {
+  const libraryRoot = (await storeGet<string>(STORE_KEYS.LIBRARY_FOLDER))?.trim() ?? "";
+  if (!libraryRoot) {
+    return {
+      ok: false,
+      added: 0,
+      failures: [],
+      error: "Dossier Library non configuré (Paramètres).",
+    };
+  }
+
+  const failures: { path: string; listId: number; error: string }[] = [];
+  let added = 0;
+
+  let conn: Awaited<ReturnType<typeof djDbConnectFromStore>>;
+  try {
+    conn = await djDbConnectFromStore();
+    if (!conn.ok) {
+      return {
+        ok: false,
+        added: 0,
+        failures: [],
+        error: conn.error ?? "Base Engine DJ : connexion impossible.",
+      };
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      added: 0,
+      failures: [],
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  const d = requireDb();
+
+  for (const batch of batches) {
+    const { listId, filePaths: rawPaths } = batch;
+    if (!Number.isFinite(listId) || listId < 1) {
+      for (const p of rawPaths) {
+        failures.push({ path: p, listId, error: "listId invalide." });
+      }
+      continue;
+    }
+    const listOk = d
+      .prepare("SELECT id FROM Playlist WHERE id = ?")
+      .get(listId) as { id: number } | undefined;
+    if (!listOk) {
+      for (const p of rawPaths) {
+        failures.push({ path: p, listId, error: "Playlist introuvable." });
+      }
+      continue;
+    }
+
+    const seen = new Set<string>();
+    for (const fp of rawPaths) {
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+
+      const abs = path.resolve(fp);
+      let trackId = findTrackIdForLibraryFile(d, libraryRoot, abs);
+      if (trackId == null) {
+        const ins = await insertNewTrackForLibraryFile(d, libraryRoot, abs);
+        if (!ins.ok) {
+          failures.push({ path: fp, listId, error: ins.error });
+          continue;
+        }
+        trackId = ins.trackId;
+      }
+
+      const r = djDbAddTrackToPlaylist(listId, trackId!);
+      if (r.ok) {
+        added += 1;
+      } else {
+        const err = r.error ?? "Impossible d’ajouter la piste.";
+        if (err.includes("déjà") || err.includes("Cette piste est déjà")) {
+          // déjà en playlist
+        } else {
+          failures.push({ path: fp, listId, error: err });
+        }
+      }
+    }
+  }
+
+  return { ok: true, added, failures };
+}
+
 /**
  * Collecte chaque nœud playlist avec une clé = chaîne de titres depuis la racine
  * (même principe que le script `doc/Add New Tracks.py` : un dossier = un titre de playlist).
@@ -781,6 +1330,65 @@ function collectPlaylistPathEntries(
 }
 
 type LibraryFolderRow = { relKey: string; absPath: string; filePaths: string[] };
+
+/** 1er segment d’une clé de chemin playlist (ex. `house` pour `house/2024`). */
+function rootSegmentFromPlaylistPathKey(pathKey: string): string {
+  const i = pathKey.indexOf("/");
+  return (i === -1 ? pathKey : pathKey.slice(0, i)).trim();
+}
+
+/**
+ * Un dossier Library descend de ce segment racine (nom du 1er niveau sous la Library).
+ */
+function libraryHasRootFolderForSegment(
+  folders: LibraryFolderRow[],
+  rootSeg: string,
+): boolean {
+  if (!rootSeg) return false;
+  for (const f of folders) {
+    if (f.relKey === rootSeg || f.relKey.startsWith(`${rootSeg}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Garde l’arbre de playlists (et sous-arbres) seulement si le **1er segment** du
+ * `pathKey` (même règle que `collectPlaylistPathEntries`) a un dossier Library
+ * (ex. `playlistA/aaa/...` → on exclut toute la branche si `Library/playlistA/`
+ * n’existe pas), même quand `playlistA` n’est pas une « racine » Engine
+ * (enfant d’un conteneur, etc.).
+ */
+function prunePlaylistTreeByFirstLibrarySegment(
+  nodes: DjPlaylistNode[],
+  pathKeyByListId: Map<number, string>,
+  folders: LibraryFolderRow[],
+): DjPlaylistNode[] {
+  const out: DjPlaylistNode[] = [];
+  for (const n of nodes) {
+    const pathKey = pathKeyByListId.get(n.id);
+    if (pathKey == null) {
+      continue;
+    }
+    const firstSeg = rootSegmentFromPlaylistPathKey(pathKey);
+    if (!libraryHasRootFolderForSegment(folders, firstSeg)) {
+      continue;
+    }
+    out.push({
+      id: n.id,
+      title: n.title,
+      parentListId: n.parentListId,
+      nextListId: n.nextListId,
+      children: prunePlaylistTreeByFirstLibrarySegment(
+        n.children,
+        pathKeyByListId,
+        folders,
+      ),
+    });
+  }
+  return out;
+}
 
 /** Parcours des dossiers sous la Library (hors racine) avec fichiers audio par dossier. */
 async function walkLibraryAudioTree(
@@ -878,7 +1486,14 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
 
   if (!libraryRoot) {
     const err = "Dossier Library non configuré (Paramètres).";
-    return { ok: false, error: err, lines: [err] };
+    return {
+      ok: false,
+      error: err,
+      lines: [err],
+      missingPlaylists: [],
+      trackIssues: [],
+      warnings: [],
+    };
   }
 
   const conn = await djDbConnectFromStore();
@@ -886,7 +1501,14 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
     const e = conn.error ?? "connexion impossible";
     lines.push(`Base Engine DJ : ${e}`);
     lines.push(`Chemin : ${conn.path}`);
-    return { ok: false, error: e, lines };
+    return {
+      ok: false,
+      error: e,
+      lines,
+      missingPlaylists: [],
+      trackIssues: [],
+      warnings: [],
+    };
   }
 
   try {
@@ -897,12 +1519,13 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
       string,
       { listId: number; labelPath: string }
     >();
+    const analysisWarnings: string[] = [];
     for (const e of plEntries) {
       if (playlistByPath.has(e.pathKey)) {
         const prev = playlistByPath.get(e.pathKey)!;
-        lines.push(
-          `⚠ Même clé d’arborescence pour deux playlists : « ${e.pathKey} » (listId ${prev.listId} et ${e.listId})`,
-        );
+        const w = `Même clé d’arborescence pour deux playlists : « ${e.pathKey} » (listId ${prev.listId} et ${e.listId})`;
+        analysisWarnings.push(w);
+        lines.push(`⚠ ${w}`);
         continue;
       }
       playlistByPath.set(e.pathKey, { listId: e.listId, labelPath: e.labelPath });
@@ -917,8 +1540,44 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { ok: false, error: msg, lines: [msg] };
+      return {
+        ok: false,
+        error: msg,
+        lines: [msg],
+        missingPlaylists: [],
+        trackIssues: [],
+        warnings: [],
+      };
     }
+
+    const folderRelKeys = new Set(folders.map((f) => f.relKey));
+    const pathKeyByListId = new Map<number, string>(
+      plEntries.map((e) => [e.listId, e.pathKey] as [number, string]),
+    );
+    const treeInLibraryPathScope = prunePlaylistTreeByFirstLibrarySegment(
+      tree,
+      pathKeyByListId,
+      folders,
+    );
+    const dbPlaylistsNotInLibrary = plEntries
+      .filter((e) => {
+        const rootSeg = rootSegmentFromPlaylistPathKey(e.pathKey);
+        if (!libraryHasRootFolderForSegment(folders, rootSeg)) return false;
+        return !folderRelKeys.has(e.pathKey);
+      })
+      .map((e) => ({ listId: e.listId, labelPath: e.labelPath }))
+      .sort((a, b) =>
+        a.labelPath.localeCompare(b.labelPath, "fr", { sensitivity: "base" }),
+      );
+    const dbPlaylistTree = buildDbSyncTreeNodes(
+      d,
+      treeInLibraryPathScope,
+      path.resolve(libraryRoot),
+    );
+    const dbTracksNotInLibrary = collectDbTracksNotInLibrary(
+      d,
+      path.resolve(libraryRoot),
+    );
 
     lines.push("=== Analyse : Library = référence → playlists Engine DJ ===");
     lines.push(
@@ -984,6 +1643,7 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
       "— Pistes (vérification Track + entrée playlist, dossiers déjà appariés uniquement) —",
     );
     const trackCache = new Map<number, Set<number>>();
+    const trackIssues: LibraryTrackSyncIssue[] = [];
     let missingDb = 0;
     let missingInList = 0;
     let okTracks = 0;
@@ -996,9 +1656,12 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
         const trackId = findTrackIdForLibraryFile(d, libraryRoot, filePath);
         if (trackId == null) {
           missingDb += 1;
-          lines.push(
-            `  Pas de piste en base (Track) : ${filePath}  [playlist listId ${pl.listId}]`,
-          );
+          trackIssues.push({
+            filePath,
+            kind: "not_in_db",
+            listId: pl.listId,
+          });
+          lines.push(`  ${filePath}  [listId ${pl.listId}]`);
           continue;
         }
         const inList = getTrackIdsInPlaylist(
@@ -1008,6 +1671,12 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
         ).has(trackId);
         if (!inList) {
           missingInList += 1;
+          trackIssues.push({
+            filePath,
+            kind: "not_in_playlist",
+            listId: pl.listId,
+            trackId,
+          });
           lines.push(
             `  Piste en base mais pas dans la playlist : ${filePath}  (trackId ${trackId}, listId ${pl.listId})`,
           );
@@ -1028,10 +1697,26 @@ export async function djDbAnalyzeLibraryVsPlaylists(): Promise<LibraryPlaylistAn
       );
     }
 
-    return { ok: true, lines };
+    return {
+      ok: true,
+      lines,
+      missingPlaylists: dirWithoutPl,
+      trackIssues,
+      warnings: analysisWarnings,
+      dbPlaylistTree,
+      dbPlaylistsNotInLibrary,
+      dbTracksNotInLibrary,
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     lines.push(msg);
-    return { ok: false, error: msg, lines };
+    return {
+      ok: false,
+      error: msg,
+      lines,
+      missingPlaylists: [],
+      trackIssues: [],
+      warnings: [],
+    };
   }
 }

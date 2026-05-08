@@ -52,6 +52,14 @@ export const IpcChannel = {
   /** Comparaison arborescence Library ↔ playlists (dev / diagnostic). */
   ENGINE_DJ_DB_ANALYZE_LIBRARY_PLAYLISTS:
     "engine-dj-db:analyze-library-playlists",
+  /** Crée la chaîne de playlists (titres = segments) pour un dossier sous Library. */
+  ENGINE_DJ_DB_ENSURE_LIBRARY_PLAYLIST: "engine-dj-db:ensure-library-playlist",
+  /**
+   * Importe les pistes manquantes (INSERT Track) puis les ajoute aux playlists
+   * indiquées (fichiers Library déjà scannés).
+   */
+  ENGINE_DJ_DB_IMPORT_TRACK_BATCH_TO_PLAYLISTS:
+    "engine-dj-db:import-track-batch-to-playlists",
 } as const;
 
 export type IpcChannelValue =
@@ -215,6 +223,11 @@ export interface DjAddChildPlaylistParams {
   title: string;
 }
 
+export interface DjEnsureLibraryPlaylistParams {
+  /** Dossier absolu (déjà sous le dossier Library). */
+  folderAbsPath: string;
+}
+
 export interface DjAddPlaylistResult {
   ok: boolean;
   id?: number;
@@ -260,11 +273,75 @@ export interface DjAddLibraryFilesToPlaylistResult {
   error?: string;
 }
 
-/** Rapport texte : Library vs arborescence playlists Engine DJ (chemins = titres comme le script « Add New Tracks »). */
+export interface DjImportTrackBatchToPlaylistsParams {
+  batches: { listId: number; filePaths: string[] }[];
+}
+
+export interface DjImportTrackBatchToPlaylistsResult {
+  ok: boolean;
+  added: number;
+  failures: { path: string; listId: number; error: string }[];
+  error?: string;
+}
+
+/** Dossier Library sans playlist correspondante en base. */
+export interface LibraryPlaylistMissingFolder {
+  relKey: string;
+  absPath: string;
+  fileCount: number;
+}
+
+/** Piste à problème (dossier déjà apparié à une playlist). */
+export interface LibraryTrackSyncIssue {
+  filePath: string;
+  kind: "not_in_db" | "not_in_playlist";
+  listId: number;
+  trackId?: number;
+}
+
+/** Nœud d’affichage SYNC : playlists + noms de fichiers (pistes) en base. */
+export interface DjSyncTreeNode {
+  id: number;
+  title: string;
+  children: DjSyncTreeNode[];
+  /** Noms de fichiers seuls, ordre playlist. */
+  trackFileNames: string[];
+  /** Même longueur que `trackFileNames` ; chemin disque (Library) par piste, ou `""` si absent. */
+  trackAbsPaths: string[];
+}
+
+/** Playlist en base dont le chemin (titres) ne correspond à aucun dossier Library. */
+export interface DjDbPlaylistNotInLibrary {
+  listId: number;
+  labelPath: string;
+}
+
+/** Piste en base dont le fichier ne se résout pas sous le dossier Library. */
+export interface DjDbTrackNotInLibrary {
+  trackId: number;
+  fileName: string;
+  /** Chemin absolu (ou vide si indéterminable). */
+  absPath: string;
+}
+
+/**
+ * Rapport Library ↔ playlists (lignes texte = rapport complet historique ; champs
+ * structurés = interface SYNC).
+ */
 export interface LibraryPlaylistAnalysisResult {
   ok: boolean;
   error?: string;
   lines: string[];
+  missingPlaylists?: LibraryPlaylistMissingFolder[];
+  trackIssues?: LibraryTrackSyncIssue[];
+  /** Avertissements (ex. clé d’arborescence dupliquée en base). */
+  warnings?: string[];
+  /** Arborescence base (SYNC, panneau gauche) — noms de fichiers pour les pistes. */
+  dbPlaylistTree?: DjSyncTreeNode[];
+  /** Playlists en base sans dossier Library correspondant. */
+  dbPlaylistsNotInLibrary?: DjDbPlaylistNotInLibrary[];
+  /** Pistes en base dont le chemin n’est pas sous le dossier Library. */
+  dbTracksNotInLibrary?: DjDbTrackNotInLibrary[];
 }
 
 export interface AppState {
@@ -350,7 +427,14 @@ export interface ElectronApi {
     addLibraryFilesToPlaylist: (
       params: DjAddLibraryFilesToPlaylistParams,
     ) => Promise<DjAddLibraryFilesToPlaylistResult>;
+    importTrackBatchToPlaylists: (
+      params: DjImportTrackBatchToPlaylistsParams,
+    ) => Promise<DjImportTrackBatchToPlaylistsResult>;
     /** Analyse provisoire : dossiers Library vs titres de playlists, présence des pistes. */
     analyzeLibraryPlaylists: () => Promise<LibraryPlaylistAnalysisResult>;
+    /** Crée les playlists manquantes (parents puis dossier) pour un chemin sous Library. */
+    ensureLibraryPlaylist: (
+      params: DjEnsureLibraryPlaylistParams,
+    ) => Promise<DjAddPlaylistResult>;
   };
 }

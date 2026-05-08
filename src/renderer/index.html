@@ -131,7 +131,7 @@
               type="button"
               class="panel-tabs__dev-analyze"
               id="btn-library-analyze"
-              title="SYNC : analyse Library vs playlists (Engine DJ)"
+              title="SYNC : comparaison Library / base Engine DJ"
             >
               SYNC
             </button>
@@ -146,34 +146,102 @@
 
       <div class="player-section" id="player-section"></div>
 
-      <div
-        class="dev-analyze-overlay"
-        id="library-analyze-overlay"
-        hidden
-        tabindex="-1"
-      >
+      <div class="sync-overlay" id="sync-overlay" hidden tabindex="-1">
         <div
-          class="dev-analyze-dialog"
+          class="sync-dialog"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="library-analyze-title"
+          aria-labelledby="sync-dialog-title"
         >
-          <div class="dev-analyze-dialog__head">
-            <span id="library-analyze-title">Analyse Library ↔ playlists</span>
+          <div class="sync-dialog__head">
+            <span id="sync-dialog-title" class="sync-dialog__title">SYNC</span>
             <button
               type="button"
-              class="dev-analyze-dialog__close"
-              id="library-analyze-close"
+              class="sync-dialog__close"
+              id="sync-close"
               aria-label="Fermer"
             >
               ×
             </button>
           </div>
-          <pre
-            class="dev-analyze-dialog__body"
-            id="library-analyze-text"
-            tabindex="0"
-          ></pre>
+          <div class="sync-dialog__body">
+            <div class="sync-dialog__loading" id="sync-loading">
+              <div class="sync-spinner" aria-hidden="true"></div>
+              <p class="sync-dialog__loading-text">Analyse en cours…</p>
+            </div>
+            <div class="sync-dialog__error" id="sync-error" hidden></div>
+            <div class="sync-dialog__inner" id="sync-content" hidden>
+              <div
+                class="sync-pane sync-pane--left"
+                id="sync-pane-left"
+                aria-label="Database"
+              >
+                <div class="sync-pane__head">
+                  <h2 class="sync-pane__title">DATABASE</h2>
+                </div>
+                <div class="sync-left-section sync-left-section--tree">
+                  <p class="sync-section__label">Playlists &amp; pistes (base)</p>
+                  <div
+                    class="sync-db-tree"
+                    id="sync-db-tree"
+                    role="tree"
+                    aria-label="Arborescence des playlists"
+                  ></div>
+                </div>
+                <div class="sync-left-section sync-left-section--orphan-pl">
+                  <p class="sync-section__label">Playlists en base, hors library</p>
+                  <ul
+                    class="sync-list sync-list--scroll sync-list--left-compact"
+                    id="sync-db-orphan-playlists"
+                  ></ul>
+                  <p
+                    class="sync-list-empty"
+                    id="sync-db-orphan-pl-empty"
+                    hidden
+                  >
+                    Aucune
+                  </p>
+                </div>
+                <div class="sync-left-section sync-left-section--orphan-tr">
+                  <p class="sync-section__label">Pistes en base, hors library</p>
+                  <ul
+                    class="sync-list sync-list--scroll sync-list--left-compact"
+                    id="sync-db-orphan-tracks"
+                  ></ul>
+                  <p
+                    class="sync-list-empty"
+                    id="sync-db-orphan-tracks-empty"
+                    hidden
+                  >
+                    Aucune
+                  </p>
+                </div>
+              </div>
+              <div class="sync-pane sync-pane--right" aria-label="Library">
+                <div class="sync-pane__head">
+                  <h2 class="sync-pane__title">LIBRARY</h2>
+                </div>
+                <div class="sync-section sync-section--warnings" id="sync-warnings-block" hidden>
+                  <p class="sync-section__label sync-section__label--warning">Avertissements</p>
+                  <ul class="sync-list" id="sync-warnings-list"></ul>
+                </div>
+                <div class="sync-section">
+                  <p class="sync-section__label">Playlists manquantes en base</p>
+                  <ul class="sync-list sync-list--scroll" id="sync-missing-playlists"></ul>
+                  <p class="sync-list-empty" id="sync-missing-playlists-empty" hidden>
+                    Aucune
+                  </p>
+                </div>
+                <div class="sync-section">
+                  <p class="sync-section__label">Pistes manquantes en base</p>
+                  <ul class="sync-list sync-list--scroll" id="sync-track-issues"></ul>
+                  <p class="sync-list-empty" id="sync-track-issues-empty" hidden>
+                    Aucun écart
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

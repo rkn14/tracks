@@ -30,6 +30,13 @@
   --radius: 6px;
   --radius-sm: 4px;
 
+  /* Barres de défilement (Firefox + WebKit / Electron) */
+  --scrollbar-size: 10px;
+  --scrollbar-track: #14141c;
+  --scrollbar-thumb: #3d3d50;
+  --scrollbar-thumb-hover: #52526a;
+  --scrollbar-thumb-active: #5c5c78;
+
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 13px;
   color: var(--color-text);
@@ -49,6 +56,41 @@ textarea,
 select {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* Scrollbars – style sombre unifié (tout le document) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: var(--radius-sm);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--scrollbar-track);
+  min-height: 32px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }
 
 /* ── App layout ───────────────────────────────── */
@@ -507,27 +549,34 @@ select {
   cursor: wait;
 }
 
-/* Popup provisoire — rapport d’analyse.
-   Ne pas mettre display:flex sur la base : ça écrase `hidden` (display:none) et l’overlay reste visible. */
-.dev-analyze-overlay {
+/* Clic droit : menu “Afficher dans l’Explorateur” (chemins en data-explorer-path) */
+.sync-overlay [data-explorer-path] {
+  cursor: context-menu;
+}
+
+/* SYNC : plein écran (presque) — ne pas mettre display:flex sur .sync-overlay seul (attribut hidden). */
+.sync-overlay {
   position: fixed;
   inset: 0;
   z-index: 9000;
-  padding: 24px;
+  padding: 0;
   background: rgba(0, 0, 0, 0.55);
 }
 
-.dev-analyze-overlay:not([hidden]) {
+.sync-overlay:not([hidden]) {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.dev-analyze-dialog {
+.sync-dialog {
   display: flex;
   flex-direction: column;
-  max-width: min(920px, 100%);
-  max-height: min(80vh, 100%);
+  width: 90vw;
+  max-width: 100%;
+  height: 90vh;
+  max-height: 100%;
+  min-height: 0;
   overflow: hidden;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
@@ -535,47 +584,487 @@ select {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
-.dev-analyze-dialog__head {
+.sync-dialog__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
-  font-size: 11px;
-  font-weight: 600;
+  flex-shrink: 0;
 }
 
-.dev-analyze-dialog__close {
+.sync-dialog__title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--color-text);
+}
+
+.sync-dialog__close {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 20px;
+  font-size: 22px;
   line-height: 1;
   cursor: pointer;
 }
 
-.dev-analyze-dialog__close:hover {
+.sync-dialog__close:hover {
   color: var(--color-text);
   background: var(--color-surface-alt);
 }
 
-.dev-analyze-dialog__body {
+.sync-dialog__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sync-dialog__loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 48px 24px;
+  min-height: 200px;
+}
+
+.sync-dialog__loading[hidden] {
+  display: none !important;
+}
+
+.sync-dialog__loading-text {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.sync-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: sync-spin 0.75s linear infinite;
+}
+
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sync-dialog__error {
+  padding: 16px 20px;
+  font-size: 13px;
+  color: var(--color-danger, #e85d5d);
+  background: color-mix(in srgb, var(--color-danger, #c44) 10%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sync-dialog__error[hidden] {
+  display: none !important;
+}
+
+.sync-dialog__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sync-dialog__inner[hidden] {
+  display: none !important;
+}
+
+.sync-pane__head {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.sync-pane__title {
   margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.sync-pane--left {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.sync-left-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sync-left-section:last-child {
+  border-bottom: none;
+}
+
+.sync-left-section .sync-section__label {
+  margin-bottom: 6px;
+}
+
+.sync-left-section--tree {
+  flex: 1 1 55%;
+  min-height: 120px;
+}
+
+.sync-left-section--orphan-pl,
+.sync-left-section--orphan-tr {
+  flex: 0 1 22%;
+  min-height: 72px;
+  max-height: 200px;
+}
+
+.sync-db-tree {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--color-text);
+}
+
+.sync-db-tree__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sync-db-tree__list--nested {
+  margin-top: 1px;
+  margin-left: 8px;
+  padding-left: 6px;
+  border-left: 1px solid var(--color-border);
+}
+
+.sync-db-tree__node {
+  margin-bottom: 1px;
+}
+
+.sync-db-tree__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 1px 2px 1px 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.sync-db-tree__row:hover {
+  background: var(--color-hover);
+}
+
+.sync-db-tree__row--leaf {
+  cursor: default;
+  padding-left: calc(0.65em + 4px + 1px);
+}
+
+.sync-db-tree__row--leaf:hover {
+  background: transparent;
+}
+
+.sync-db-tree__chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 0.85em;
+  margin-top: 0.2em;
+  justify-content: center;
+  font-size: 0.65em;
+  line-height: 1;
+  color: var(--color-text-muted);
+}
+
+.sync-db-tree__chevron::before {
+  content: "▶";
+  display: inline-block;
+  transform-origin: 40% 50%;
+  transition: transform 0.12s ease;
+}
+
+.sync-db-tree__row[aria-expanded="true"] .sync-db-tree__chevron::before {
+  transform: rotate(90deg);
+}
+
+.sync-db-tree__node-body {
+  margin: 0;
+  padding: 0;
+}
+
+.sync-db-tree__playlist-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.sync-db-tree__track {
+  margin-top: 0;
+  padding-left: 8px;
   font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--color-text-muted);
+}
+
+.sync-list--left-compact {
+  max-height: 140px;
+}
+
+.sync-pane--right {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sync-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  flex: 1;
+}
+
+.sync-section:last-child {
+  border-bottom: none;
+}
+
+.sync-section__label {
+  flex-shrink: 0;
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.sync-section__label--warning {
+  color: var(--color-warning, #d4a017);
+}
+
+.sync-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-text);
+}
+
+.sync-list--scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.sync-list li {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  word-break: break-word;
+}
+
+/* Pistes manquantes en base (LIBRARY) : arbo dossiers, plier / déplier */
+#sync-track-issues {
+  gap: 1px;
+}
+
+#sync-track-issues > li {
+  padding: 3px 5px;
+}
+
+#sync-track-issues .sync-lib-issues-folder-body[hidden] {
+  display: none !important;
+}
+
+#sync-track-issues .sync-lib-issues-nested {
+  list-style: none;
+  margin: 0;
+  padding: 1px 0 1px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 1px solid var(--color-border);
+}
+
+#sync-track-issues .sync-lib-issues-folder-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+#sync-track-issues .sync-lib-issues-folder-header .sync-lib-issues-folder-row {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+#sync-track-issues .sync-lib-issues-folder-header .sync-btn-add-issues-folder {
+  flex-shrink: 0;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.sync-btn-add-to-db--compact.dialog-btn {
+  height: 22px;
+  padding: 0 8px;
   font-size: 10px;
-  line-height: 1.4;
-  white-space: pre-wrap;
+  line-height: 1.2;
+}
+
+#sync-track-issues .sync-lib-issues-node > .sync-lib-issues-folder-body {
+  margin-top: 0;
+}
+
+#sync-track-issues .sync-lib-issues-folder-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 1px 2px 1px 1px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+#sync-track-issues .sync-lib-issues-folder-row:hover {
+  background: var(--color-hover);
+}
+
+#sync-track-issues .sync-lib-issues-folder-label {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
   word-break: break-word;
   color: var(--color-text);
+}
+
+#sync-track-issues
+  .sync-lib-issues-folder-row[aria-expanded="true"]
+  .sync-db-tree__chevron::before {
+  transform: rotate(90deg);
+}
+
+#sync-track-issues .sync-lib-issues-nested li {
+  padding: 2px 4px;
+  background: var(--color-bg);
+  border: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
+}
+
+#sync-track-issues .sync-lib-issues-file {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#sync-track-issues .sync-lib-issues-file__text {
+  flex: 1;
+  min-width: 0;
+}
+
+#sync-track-issues .sync-lib-issues-file .sync-btn-add-issues-file {
+  flex-shrink: 0;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+#sync-track-issues .sync-list__meta {
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+.sync-missing-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sync-missing-row__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-missing-row .sync-btn-add-to-db {
+  flex-shrink: 0;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.sync-list__path {
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+}
+
+.sync-list__meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.sync-list-empty {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-dim);
+}
+
+.sync-list-empty[hidden] {
+  display: none !important;
 }
 
 .panel-tab-page {
@@ -901,19 +1390,6 @@ button.fe-tree-item.dj-pl-tree-leaf {
   background: var(--color-surface);
 }
 
-.fe-tree::-webkit-scrollbar {
-  width: 5px;
-}
-
-.fe-tree::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.fe-tree::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
-}
-
 .fe-tree-item {
   display: flex;
   align-items: center;
@@ -1039,23 +1515,6 @@ button.fe-tree-item.dj-pl-tree-leaf {
 
 .fe-list-header__btn.is-sorted.is-sorted-desc::after {
   content: " \u25BC";
-}
-
-.fe-content::-webkit-scrollbar {
-  width: 6px;
-}
-
-.fe-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.fe-content::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
-}
-
-.fe-content::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-dim);
 }
 
 .fe-row {
@@ -1905,15 +2364,6 @@ button.fe-tree-item.dj-pl-tree-leaf {
   border-radius: var(--radius-sm);
   background: var(--color-bg);
   padding: 4px 0;
-}
-
-.dialog-checklist::-webkit-scrollbar {
-  width: 5px;
-}
-
-.dialog-checklist::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
 }
 
 .dialog-check-row {

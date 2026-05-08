@@ -4,9 +4,11 @@ import {
   IpcChannel,
   type DjAddChildPlaylistParams,
   type DjAddLibraryFilesToPlaylistParams,
+  type DjEnsureLibraryPlaylistParams,
   type DjAddTrackToPlaylistParams,
   type DjRemoveTrackFromPlaylistParams,
   type DjReorderPlaylistTracksParams,
+  type DjImportTrackBatchToPlaylistsParams,
   type EssentiaAnalysis,
   type ProfileScores,
 } from "@shared/types";
@@ -43,6 +45,8 @@ import {
   djDbRemoveTrackFromPlaylist,
   djDbReorderPlaylistTracks,
   djDbAnalyzeLibraryVsPlaylists,
+  djDbEnsurePlaylistForLibraryFolder,
+  djDbImportTrackBatchToPlaylists,
 } from "./services/engine-dj-db";
 
 export function registerIpcHandlers(ipcMain: IpcMain): void {
@@ -228,5 +232,17 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(IpcChannel.ENGINE_DJ_DB_ANALYZE_LIBRARY_PLAYLISTS, () =>
     djDbAnalyzeLibraryVsPlaylists(),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_ENSURE_LIBRARY_PLAYLIST,
+    (_e, params: DjEnsureLibraryPlaylistParams) =>
+      djDbEnsurePlaylistForLibraryFolder(params.folderAbsPath),
+  );
+
+  ipcMain.handle(
+    IpcChannel.ENGINE_DJ_DB_IMPORT_TRACK_BATCH_TO_PLAYLISTS,
+    (_e, params: DjImportTrackBatchToPlaylistsParams) =>
+      djDbImportTrackBatchToPlaylists(params.batches),
   );
 }
